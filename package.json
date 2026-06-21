@@ -1,0 +1,22 @@
+{
+  "name": "ecode-dev-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Monorepo for Ecology 9 ecode local development assistant",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm test --workspaces",
+    "lint": "npm run lint --workspaces"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

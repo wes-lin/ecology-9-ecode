@@ -1,0 +1,113 @@
+{
+  "name": "vscode-ecode",
+  "displayName": "eCode Explorer",
+  "description": "Browse and download Ecology 9 ecode files from VS Code",
+  "version": "0.1.0",
+  "publisher": "ecode-dev-assistant",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "eCode",
+      "properties": {
+        "ecode.baseUrl": {
+          "type": "string",
+          "default": "http://localhost",
+          "description": "eCode server base URL"
+        },
+        "ecode.username": {
+          "type": "string",
+          "default": "",
+          "description": "eCode login account"
+        },
+        "ecode.password": {
+          "type": "string",
+          "default": "",
+          "description": "eCode login password"
+        },
+        "ecode.localDir": {
+          "type": "string",
+          "default": "src",
+          "description": "Local directory to download ecode source files"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ecode",
+          "title": "eCode",
+          "icon": "assets/ecode.svg"
+        }
+      ]
+    },
+    "views": {
+      "ecode": [
+        {
+          "id": "ecodeSettings",
+          "type": "webview",
+          "name": "Settings",
+          "when": "true"
+        },
+        {
+          "id": "ecodeExplorer",
+          "name": "Explorer",
+          "when": "true"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "ecode.refresh",
+        "title": "eCode: Refresh Explorer",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ecode.downloadFile",
+        "title": "eCode: Download File",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "ecode.openSettings",
+        "title": "eCode: Open Settings",
+        "icon": "$(gear)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ecode.refresh",
+          "when": "view == ecodeExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "ecode.openSettings",
+          "when": "view == ecodeExplorer",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ecode.downloadFile",
+          "when": "view == ecodeExplorer && viewItem == file",
+          "group": "inline"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "echo 'No build step required'",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "ecode-sdk": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0"
+  }
+}
