@@ -8,15 +8,15 @@ const mkdir = promisify(fs.mkdir);
 const writeFile = promisify(fs.writeFile);
 
 class EcodeNode {
-  constructor(id, label, type, treeType, remotePath, hasChild, children = [], appId) {
+  constructor(id, label, type, treeType, remotePath, hasChild, appId) {
     this.id = id;
     this.label = label;
     this.type = type; // 'folder' | 'file'
     this.treeType = treeType;
     this.remotePath = remotePath;
     this.hasChild = hasChild;
-    this.children = children;
     this.appId = appId;
+    this.checkboxState = vscode.TreeItemCheckboxState.Unchecked;
   }
 }
 
@@ -45,12 +45,15 @@ class EcodeTreeDataProvider {
 
     if (!isInfo) {
       treeItem.iconPath = element.type === 'folder' ? new vscode.ThemeIcon('folder') : new vscode.ThemeIcon('file');
-      treeItem.contextValue = element.type;
+      const isDownloadableFolder = element.type === 'folder' && element.appId;
+      treeItem.contextValue = isDownloadableFolder ? 'downloadable' : element.type;
       treeItem.tooltip = element.remotePath;
-      treeItem.command =
-        element.type === 'file'
-          ? { command: 'ecode.downloadFile', title: 'Download', arguments: [element] }
-          : undefined;
+      if (isDownloadableFolder) {
+        treeItem.checkboxState = element.checkboxState;
+      }
+      if (element.type === 'file') {
+        treeItem.command = { command: 'ecode.viewFile', title: 'View File', arguments: [element] };
+      }
     }
 
     return treeItem;
@@ -86,10 +89,79 @@ class EcodeTreeDataProvider {
       } else {
         tree = await client.listTree('', element.id);
       }
-      return this._mapTree(tree);
+      const children = this._mapTree(tree);
+      element.children = children;
+      return children;
     }
 
     return [];
+  }
+
+  setCheckboxState(element, state) {
+    element.checkboxState = state;
+  }
+
+  getCheckedItems() {
+    const checked = [];
+    const walk = (nodes) => {
+      for (const node of nodes) {
+        if (node.type === 'folder' && node.appId && node.checkboxState === vscode.TreeItemCheckboxState.Checked) {
+          checked.push(node);
+        }
+        if (node.children && node.children.length > 0) {
+          walk(node.children);
+        }
+      }
+    };
+    walk(this.rootItems);
+    return checked;
+  }
+
+  async downloadSelected() {
+    const items = this.getCheckedItems();
+    if (items.length === 0) {
+      vscode.window.showWarningMessage('No folders selected. Check the checkbox next to folders to download.');
+      return;
+    }
+    const confirm = await vscode.window.showWarningMessage(
+      `Download ${items.length} folder(s)?`,
+      { modal: true },
+      'Download'
+    );
+    if (confirm !== 'Download') return;
+
+    let success = 0;
+    let failed = 0;
+    for (const item of items) {
+      try {
+        await this.downloadFile(item);
+        success++;
+      } catch {
+        failed++;
+      }
+    }
+    vscode.window.showInformationMessage(`Batch download complete: ${success} succeeded, ${failed} failed.`);
+  }
+
+  async viewFile(element) {
+    try {
+      const client = this._getClient();
+      const buffer = await client.viewFile(element.id);
+      console.log(buffer);
+
+      const uri = vscode.Uri.parse(`ecode:${element.remotePath}`);
+      const provider = new (class {
+        provideTextDocumentContent() {
+          return buffer.toString('utf-8');
+        }
+      })();
+      const registration = vscode.workspace.registerTextDocumentContentProvider('ecode', provider);
+      const doc = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(doc, { preview: true });
+      registration.dispose();
+    } catch (err) {
+      vscode.window.showErrorMessage(`View file failed: ${err.message}`);
+    }
   }
 
   async downloadFile(element) {
@@ -143,13 +215,14 @@ class EcodeTreeDataProvider {
     return tree.map((item) => {
       return new EcodeNode(
         item.id,
-        item.name || 'unknown',
+        item.name,
         item.treeType === 'folder' || item.businessType === 'type' || item.businessType === 'project'
           ? 'folder'
           : 'file',
         item.treeType || '',
-        item.path || item.remotePath || item.name || '',
-        item.hasChild
+        item.name,
+        item.hasChild || false,
+        item.initialAppId
       );
     });
   }

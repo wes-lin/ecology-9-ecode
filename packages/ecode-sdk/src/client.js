@@ -155,6 +155,12 @@ class EcodeClient {
     );
   }
 
+  async viewFile(id) {
+    const res = await this._get('/api/cloudstore/ecode/one', { id });
+    const resData = await res.json();
+    return resData.data.content;
+  }
+
   async uploadFile(localPath, remotePath) {
     const form = new FormData();
     form.append('path', remotePath);
