@@ -147,7 +147,6 @@ class EcodeTreeDataProvider {
     try {
       const client = this._getClient();
       const buffer = await client.viewFile(element.id);
-      console.log(buffer);
 
       const uri = vscode.Uri.parse(`ecode:${element.remotePath}`);
       const provider = new (class {
