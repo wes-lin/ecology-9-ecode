@@ -13,12 +13,12 @@ VS Code extension for browsing and downloading Ecology 9 ecode files.
 
 Open VS Code settings and search for `ecode`:
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `ecode.baseUrl` | `http://localhost` | eCode server URL |
-| `ecode.username` | `''` | Login account |
-| `ecode.password` | `''` | Login password |
-| `ecode.localDir` | `src` | Local download directory |
+| Setting          | Default            | Description              |
+| ---------------- | ------------------ | ------------------------ |
+| `ecode.baseUrl`  | `http://localhost` | eCode server URL         |
+| `ecode.username` | `''`               | Login account            |
+| `ecode.password` | `''`               | Login password           |
+| `ecode.localDir` | `src`              | Local download directory |
 
 ## Commands
 

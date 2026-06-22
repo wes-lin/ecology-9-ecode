@@ -8,18 +8,23 @@ const mkdir = promisify(fs.mkdir);
 const writeFile = promisify(fs.writeFile);
 
 class EcodeNode {
-  constructor(label, type, remotePath, children = []) {
+  constructor(id, label, type, treeType, remotePath, hasChild, children = [], appId) {
+    this.id = id;
     this.label = label;
     this.type = type; // 'folder' | 'file'
+    this.treeType = treeType;
     this.remotePath = remotePath;
+    this.hasChild = hasChild;
     this.children = children;
+    this.appId = appId;
   }
 }
 
 class EcodeTreeDataProvider {
-  constructor() {
+  constructor(cookieFile) {
     this._onDidChangeTreeData = new vscode.EventEmitter();
     this.onDidChangeTreeData = this._onDidChangeTreeData.event;
+    this.cookieFile = cookieFile;
     this.client = null;
     this.rootItems = [];
   }
@@ -32,42 +37,40 @@ class EcodeTreeDataProvider {
 
   getTreeItem(element) {
     const isInfo = element.type === 'info';
+    const isFile = element.type === 'file' || !element.hasChild;
     const treeItem = new vscode.TreeItem(
       element.label,
-      isInfo || element.type === 'file'
-        ? vscode.TreeItemCollapsibleState.None
-        : vscode.TreeItemCollapsibleState.Collapsed
+      isInfo || isFile ? vscode.TreeItemCollapsibleState.None : vscode.TreeItemCollapsibleState.Collapsed
     );
 
     if (!isInfo) {
-      treeItem.iconPath = element.type === 'folder'
-        ? new vscode.ThemeIcon('folder')
-        : new vscode.ThemeIcon('file');
+      treeItem.iconPath = element.type === 'folder' ? new vscode.ThemeIcon('folder') : new vscode.ThemeIcon('file');
       treeItem.contextValue = element.type;
       treeItem.tooltip = element.remotePath;
-      treeItem.command = element.type === 'file'
-        ? { command: 'ecode.downloadFile', title: 'Download', arguments: [element] }
-        : undefined;
+      treeItem.command =
+        element.type === 'file'
+          ? { command: 'ecode.downloadFile', title: 'Download', arguments: [element] }
+          : undefined;
     }
 
     return treeItem;
   }
 
   async getChildren(element) {
+    const config = this._getConfig();
+    const baseUrl = config.get('baseUrl', 'http://localhost');
+    const username = config.get('username', '');
+    const password = config.get('password', '');
+    if (!baseUrl || baseUrl === 'http://localhost' || !username || !password) {
+      return [];
+    }
+    const client = this._getClient();
+    if (!client.isLoggedIn()) {
+      await client.login();
+    }
     if (!element) {
-      const config = this._getConfig();
-      const baseUrl = config.get('baseUrl', 'http://localhost');
-      const username = config.get('username', '');
-      const password = config.get('password', '');
-
-      if (!baseUrl || baseUrl === 'http://localhost' || !username || !password) {
-        return [];
-      }
-
       try {
-        const client = this._getClient();
-        await client.login();
-        const tree = await client.listTree('/');
+        const tree = await client.listTree();
         this.rootItems = this._mapTree(tree);
         if (this.rootItems.length === 0) {
           return [new EcodeNode('(empty)', 'info', '', [])];
@@ -76,9 +79,17 @@ class EcodeTreeDataProvider {
       } catch (err) {
         return [new EcodeNode(`❌ ${err.message}`, 'info', '', [])];
       }
+    } else if (element.hasChild) {
+      let tree;
+      if (element.treeType === 'folder') {
+        tree = await client.listTree(element.id, '');
+      } else {
+        tree = await client.listTree('', element.id);
+      }
+      return this._mapTree(tree);
     }
 
-    return element.children || [];
+    return [];
   }
 
   async downloadFile(element) {
@@ -95,7 +106,9 @@ class EcodeTreeDataProvider {
       await mkdir(targetDir, { recursive: true });
 
       const client = this._getClient();
-      await client.login();
+      if (!client.isLoggedIn()) {
+        await client.login();
+      }
       const buffer = await client.downloadFile(element.remotePath);
 
       const targetPath = path.join(workspaceFolder, localDir, element.remotePath);
@@ -119,6 +132,7 @@ class EcodeTreeDataProvider {
         baseUrl: config.get('baseUrl', 'http://localhost'),
         username: config.get('username', ''),
         password: config.get('password', ''),
+        cookieFile: this.cookieFile,
       });
     }
     return this.client;
@@ -127,12 +141,15 @@ class EcodeTreeDataProvider {
   _mapTree(tree) {
     if (!Array.isArray(tree)) return [];
     return tree.map((item) => {
-      const children = item.children ? this._mapTree(item.children) : [];
       return new EcodeNode(
-        item.name || item.label || 'unknown',
-        item.type === 'file' ? 'file' : 'folder',
+        item.id,
+        item.name || 'unknown',
+        item.treeType === 'folder' || item.businessType === 'type' || item.businessType === 'project'
+          ? 'folder'
+          : 'file',
+        item.treeType || '',
         item.path || item.remotePath || item.name || '',
-        children
+        item.hasChild
       );
     });
   }

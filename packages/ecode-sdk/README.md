@@ -23,4 +23,4 @@ await client.uploadFile('/local/path.js', '/remote/path.js');
 
 ## Notes
 
-The SDK uses the modern Node.js global `fetch` API plus `form-data` for uploads. The actual endpoint paths (`/api/ecode/*`) are placeholders and should be replaced with the real ecode API routes once known.
+The SDK uses the modern Node.js global `fetch` API plus `form-data` for uploads. It maintains a cookie jar automatically, so `login()` stores the session cookie and subsequent requests carry it automatically. The actual endpoint paths (`/api/ecode/*`) are placeholders and should be replaced with the real ecode API routes once known.

@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "checkJs": true,
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "node",
+    "baseUrl": ".",
+    "paths": {
+      "ecode-sdk": ["./packages/ecode-sdk/src/index.js"]
+    }
+  },
+  "include": ["packages/**/*"],
+  "exclude": ["node_modules", "**/*.test.js"]
+}

@@ -15,7 +15,7 @@ class EcodeSettingsWebviewProvider {
       localResourceRoots: [this.extensionUri],
     };
 
-    webviewView.webview.html = this._getHtml(webviewView.webview);
+    webviewView.webview.html = this._getHtml();
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
       if (message.command === 'save') {
@@ -32,11 +32,11 @@ class EcodeSettingsWebviewProvider {
 
   refresh() {
     if (this._view) {
-      this._view.webview.html = this._getHtml(this._view.webview);
+      this._view.webview.html = this._getHtml();
     }
   }
 
-  _getHtml(webview) {
+  _getHtml() {
     const config = vscode.workspace.getConfiguration('ecode');
     const baseUrl = config.get('baseUrl', 'http://localhost');
     const username = config.get('username', '');

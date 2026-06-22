@@ -94,7 +94,7 @@
       "view/item/context": [
         {
           "command": "ecode.downloadFile",
-          "when": "view == ecodeExplorer && viewItem == file",
+          "when": "view == ecodeExplorer && viewItem == downloadable",
           "group": "inline"
         }
       ]
@@ -102,7 +102,8 @@
   },
   "scripts": {
     "build": "echo 'No build step required'",
-    "lint": "eslint ."
+    "lint": "echo 'Run lint from root'",
+    "test": "echo 'No tests yet'"
   },
   "dependencies": {
     "ecode-sdk": "^0.1.0"

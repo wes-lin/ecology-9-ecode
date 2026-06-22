@@ -1,9 +1,11 @@
 const vscode = require('vscode');
+const path = require('path');
 const { EcodeTreeDataProvider } = require('./src/treeDataProvider');
 const { EcodeSettingsWebviewProvider } = require('./src/settingsWebviewProvider');
 
 function activate(context) {
-  const treeDataProvider = new EcodeTreeDataProvider();
+  const cookieFile = path.join(context.globalStorageUri.fsPath, 'cookies.json');
+  const treeDataProvider = new EcodeTreeDataProvider(cookieFile);
   const treeView = vscode.window.createTreeView('ecodeExplorer', {
     treeDataProvider,
     showCollapseAll: true,
@@ -23,9 +25,7 @@ function activate(context) {
     settingsWebviewProvider.refresh();
   };
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand('ecode.refresh', () => refreshAll())
-  );
+  context.subscriptions.push(vscode.commands.registerCommand('ecode.refresh', () => refreshAll()));
 
   context.subscriptions.push(
     vscode.commands.registerCommand('ecode.downloadFile', async (item) => {
