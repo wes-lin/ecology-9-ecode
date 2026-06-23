@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { promisify } = require('util');
 const { EcodeClient, EcodeLogger } = require('ecode-sdk');
+const { EcodeFileSystemProvider } = require('./fileSystemProvider');
 
 const mkdir = promisify(fs.mkdir);
 const writeFile = promisify(fs.writeFile);
@@ -27,12 +28,29 @@ class EcodeTreeDataProvider {
     this.cookieFile = cookieFile;
     this.client = null;
     this.rootItems = [];
+
+    // 文件内容缓存：uri → 内容字符串
+    this._fileContents = new Map();
+
+    // 注册只读 FileSystemProvider（提供面包屑等原生功能）
+    this._fileSystemProvider = new EcodeFileSystemProvider(this);
+    this._fsRegistration = vscode.workspace.registerFileSystemProvider(
+      'ecode',
+      this._fileSystemProvider,
+      { isCaseSensitive: false, isReadonly: true }
+    );
   }
 
   refresh() {
     this.client = null;
     this.rootItems = [];
+    this._fileContents.clear();
     this._onDidChangeTreeData.fire();
+  }
+
+  dispose() {
+    this._fsRegistration.dispose();
+    this._onDidChangeTreeData.dispose();
   }
 
   getTreeItem(element) {
@@ -45,6 +63,7 @@ class EcodeTreeDataProvider {
 
     if (!isInfo) {
       treeItem.iconPath = element.type === 'folder' ? new vscode.ThemeIcon('folder') : new vscode.ThemeIcon('file');
+      treeItem.resourceUri = vscode.Uri.parse(`ecode:/${element.remotePath}`);
       const isDownloadableFolder = element.type === 'folder' && element.appId;
       treeItem.contextValue = isDownloadableFolder ? 'downloadable' : element.type;
       treeItem.tooltip = element.remotePath;
@@ -145,16 +164,11 @@ class EcodeTreeDataProvider {
       const client = this._getClient();
       const buffer = await client.viewFile(element.id);
 
-      const uri = vscode.Uri.parse(`ecode:${element.remotePath}`);
-      const provider = new (class {
-        provideTextDocumentContent() {
-          return buffer.toString('utf-8');
-        }
-      })();
-      const registration = vscode.workspace.registerTextDocumentContentProvider('ecode', provider);
+      const uri = vscode.Uri.parse(`ecode:/${element.remotePath}`);
+      this._fileContents.set(uri.toString(), buffer.toString('utf-8'));
+
       const doc = await vscode.workspace.openTextDocument(uri);
-      await vscode.window.showTextDocument(doc, { preview: true });
-      registration.dispose();
+      await vscode.window.showTextDocument(doc, { preview: false });
     } catch (err) {
       vscode.window.showErrorMessage(`View file failed: ${err.message}`);
     }
@@ -174,11 +188,11 @@ class EcodeTreeDataProvider {
       await mkdir(targetDir, { recursive: true });
 
       const client = this._getClient();
-      const buffer = await client.downloadFile(element.remotePath);
+      const buf = await client.downloadFile(element.remotePath);
 
       const targetPath = path.join(workspaceFolder, localDir, element.remotePath);
       await mkdir(path.dirname(targetPath), { recursive: true });
-      await writeFile(targetPath, buffer);
+      await writeFile(targetPath, buf);
 
       vscode.window.showInformationMessage(`Downloaded ${element.remotePath}`);
     } catch (err) {
@@ -210,7 +224,6 @@ class EcodeTreeDataProvider {
   _mapTree(tree, parentPath = '') {
     if (!Array.isArray(tree)) return [];
     return tree.map((item) => {
-      // 叠加父级目录，构建完整远程路径
       const remotePath = parentPath
         ? `${parentPath.replace(/\/$/, '')}/${item.name}`
         : item.name;

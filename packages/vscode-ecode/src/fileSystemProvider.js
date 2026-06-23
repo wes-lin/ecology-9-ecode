@@ -1,0 +1,142 @@
+const vscode = require('vscode');
+
+/**
+ * EcodeFileSystemProvider
+ *
+ * 将远程文件映射为 VSCode 虚拟文件系统（scheme: ecode），使面包屑、
+ * 资源管理器等原生功能可用。只读：readFile / stat / readDirectory，
+ * 不支持写入。
+ */
+class EcodeFileSystemProvider {
+  /**
+   * @param {object} treeDataProvider  EcodeTreeDataProvider 实例，提供 rootItems 和 _fileContents
+   */
+  constructor(treeDataProvider) {
+    this.tree = treeDataProvider;
+    this._onDidChangeFile = new vscode.EventEmitter();
+    this.onDidChangeFile = this._onDidChangeFile.event;
+  }
+
+  /**
+   * 根据路径判断文件/文件夹类型
+   * @param {vscode.Uri} uri  如 ecode:/foo/bar.js
+   * @returns {Promise<vscode.FileStat>}
+   */
+  async stat(uri) {
+    const filePath = uri.path;
+
+    // 文件内容缓存中有记录 → 文件
+    if (this.tree._fileContents.has(uri.toString())) {
+      return { type: vscode.FileType.File, ctime: Date.now(), mtime: Date.now(), size: -1 };
+    }
+
+    // 尝试从已加载的树节点判断是否为文件夹
+    const isDir = this._isKnownDirectory(filePath);
+    if (isDir) {
+      return { type: vscode.FileType.Directory, ctime: Date.now(), mtime: Date.now(), size: -1 };
+    }
+
+    // 兜底：未知路径当作文件（打开时会触发 viewFile 加载）
+    return { type: vscode.FileType.File, ctime: Date.now(), mtime: Date.now(), size: -1 };
+  }
+
+  /**
+   * 读取文件内容
+   * @param {vscode.Uri} uri
+   * @returns {Promise<Uint8Array>}
+   */
+  async readFile(uri) {
+    const content = this.tree._fileContents.get(uri.toString());
+    if (content !== undefined) {
+      return Buffer.from(content, 'utf8');
+    }
+    // 未缓存时返回空，避免报错
+    return Buffer.from('', 'utf8');
+  }
+
+  /**
+   * 列出目录下的直接子项
+   * @param {vscode.Uri} uri
+   * @returns {Promise<[string, vscode.FileType][]>}
+   */
+  async readDirectory(uri) {
+    const dirPath = uri.path;
+    const entries = [];
+    this._collectChildren(dirPath, entries);
+    return entries;
+  }
+
+  // ── 只读 FS：以下方法不支持 ────────────────────────────────────────────────
+
+  watch() {
+    return { dispose() {} };
+  }
+
+  async writeFile() {
+    throw new Error('Read-only filesystem');
+  }
+
+  async delete() {
+    throw new Error('Read-only filesystem');
+  }
+
+  async rename() {
+    throw new Error('Read-only filesystem');
+  }
+
+  async createDirectory() {
+    throw new Error('Read-only filesystem');
+  }
+
+  // ── 内部工具 ───────────────────────────────────────────────────────────────
+
+  get rootItems() {
+    return this.tree.rootItems;
+  }
+
+  /** 从树节点中收集指定路径下的直接子项 */
+  _collectChildren(dirPath, result) {
+    const nodesToScan = this.rootItems || [];
+
+    if (dirPath && dirPath !== '/') {
+      const targetNode = this._findNodeByPath(dirPath, nodesToScan);
+      if (!targetNode?.children) return;
+      for (const child of targetNode.children) {
+        result.push([child.label, child.type === 'folder' ? vscode.FileType.Directory : vscode.FileType.File]);
+      }
+      return;
+    }
+
+    for (const node of nodesToScan) {
+      result.push([node.label, node.type === 'folder' ? vscode.FileType.Directory : vscode.FileType.File]);
+    }
+  }
+
+  /** 递归查找路径对应的树节点 */
+  _findNodeByPath(targetPath, nodes) {
+    const normalized = targetPath.replace(/^\//, '');
+    for (const node of nodes) {
+      if ((node.remotePath || '') === normalized) return node;
+      if (node.children) {
+        const found = this._findNodeByPath(targetPath, node.children);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  /** 判断路径是否为已知的文件夹节点 */
+  _isKnownDirectory(filePath) {
+    const normalized = filePath.replace(/^\//, '');
+    const check = (nodes) => {
+      for (const node of nodes) {
+        if ((node.remotePath || '') === normalized && node.type === 'folder') return true;
+        if (node.children?.length && check(node.children)) return true;
+      }
+      return false;
+    };
+    return check(this.rootItems || []);
+  }
+}
+
+module.exports = { EcodeFileSystemProvider };

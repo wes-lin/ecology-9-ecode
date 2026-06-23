@@ -11,6 +11,7 @@ function activate(context) {
   });
 
   context.subscriptions.push(treeView);
+  context.subscriptions.push(treeDataProvider);
 
   context.subscriptions.push(vscode.commands.registerCommand('ecode.refresh', () => treeDataProvider.refresh()));
 
