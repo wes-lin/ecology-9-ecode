@@ -2,7 +2,7 @@ const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
 const { promisify } = require('util');
-const { EcodeClient } = require('ecode-sdk');
+const { EcodeClient, EcodeLogger } = require('ecode-sdk');
 
 const mkdir = promisify(fs.mkdir);
 const writeFile = promisify(fs.writeFile);
@@ -68,13 +68,10 @@ class EcodeTreeDataProvider {
       return [];
     }
     const client = this._getClient();
-    if (!client.isLoggedIn()) {
-      await client.login();
-    }
     if (!element) {
       try {
         const tree = await client.listTree();
-        this.rootItems = this._mapTree(tree);
+        this.rootItems = this._mapTree(tree, '');
         if (this.rootItems.length === 0) {
           return [new EcodeNode('(empty)', 'info', '', [])];
         }
@@ -89,7 +86,7 @@ class EcodeTreeDataProvider {
       } else {
         tree = await client.listTree('', element.id);
       }
-      const children = this._mapTree(tree);
+      const children = this._mapTree(tree, element.remotePath);
       element.children = children;
       return children;
     }
@@ -177,9 +174,6 @@ class EcodeTreeDataProvider {
       await mkdir(targetDir, { recursive: true });
 
       const client = this._getClient();
-      if (!client.isLoggedIn()) {
-        await client.login();
-      }
       const buffer = await client.downloadFile(element.remotePath);
 
       const targetPath = path.join(workspaceFolder, localDir, element.remotePath);
@@ -204,14 +198,22 @@ class EcodeTreeDataProvider {
         username: config.get('username', ''),
         password: config.get('password', ''),
         cookieFile: this.cookieFile,
+        logger: new EcodeLogger({
+          console: true,
+          level: 'debug',
+        }),
       });
     }
     return this.client;
   }
 
-  _mapTree(tree) {
+  _mapTree(tree, parentPath = '') {
     if (!Array.isArray(tree)) return [];
     return tree.map((item) => {
+      // 叠加父级目录，构建完整远程路径
+      const remotePath = parentPath
+        ? `${parentPath.replace(/\/$/, '')}/${item.name}`
+        : item.name;
       return new EcodeNode(
         item.id,
         item.name,
@@ -219,7 +221,7 @@ class EcodeTreeDataProvider {
           ? 'folder'
           : 'file',
         item.treeType || '',
-        item.name,
+        remotePath,
         item.hasChild || false,
         item.initialAppId
       );
