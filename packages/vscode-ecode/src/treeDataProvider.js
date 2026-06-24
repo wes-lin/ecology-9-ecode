@@ -9,7 +9,7 @@ const mkdir = promisify(fs.mkdir);
 const writeFile = promisify(fs.writeFile);
 
 class EcodeNode {
-  constructor(id, label, type, treeType, remotePath, hasChild, appId, attribute, deletable) {
+  constructor(id, label, type, treeType, remotePath, hasChild, appId, attribute, deletable, state) {
     this.id = id;
     this.label = label;
     this.type = type; // 'folder' | 'file'
@@ -19,6 +19,7 @@ class EcodeNode {
     this.appId = appId;
     this.attribute = attribute;
     this.deletable = deletable;
+    this.state = state;
   }
 }
 
@@ -75,6 +76,9 @@ class EcodeTreeDataProvider {
       treeItem.resourceUri = vscode.Uri.parse(`ecode:/${element.remotePath}`);
       treeItem.contextValue = element.deletable ? `${element.type}-deletable` : element.type;
       treeItem.tooltip = element.remotePath;
+      if (element.state === 'pre-state') {
+        treeItem.description = 'P';
+      }
       if (element.type === 'file') {
         treeItem.command = { command: 'ecode.openLocalFile', title: 'Open Local File', arguments: [element] };
       }
@@ -275,7 +279,8 @@ class EcodeTreeDataProvider {
         item.hasChild || false,
         item.initialAppId || '',
         item.attribute || '',
-        !['system', 'jar', 'config', 'resource', 'non-code'].includes(item.attribute)
+        !['system', 'jar', 'config', 'resource', 'non-code'].includes(item.attribute),
+        item.state || ''
       );
     });
   }

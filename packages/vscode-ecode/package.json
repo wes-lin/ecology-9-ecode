@@ -117,27 +117,27 @@
       "view/item/context": [
         {
           "command": "ecode.refreshFolder",
-          "when": "view == ecodeExplorer && (viewItem == folder || viewItem == folder-deletable)",
+          "when": "view == ecodeExplorer && viewItem =~ /folder/",
           "group": "navigation"
         },
         {
           "command": "ecode.deleteItem",
-          "when": "view == ecodeExplorer && (viewItem == file-deletable || viewItem == folder-deletable)",
+          "when": "view == ecodeExplorer && viewItem =~ /deletable/",
           "group": "navigation"
         },
         {
           "command": "ecode.openLocalFile",
-          "when": "view == ecodeExplorer && viewItem == file",
+          "when": "view == ecodeExplorer && viewItem =~ /file/",
           "group": "inline"
         },
         {
           "command": "ecode.compareWithRemote",
-          "when": "view == ecodeExplorer && viewItem == file",
+          "when": "view == ecodeExplorer && viewItem =~ /file/",
           "group": "navigation"
         },
         {
           "command": "ecode.viewFile",
-          "when": "view == ecodeExplorer && viewItem == file",
+          "when": "view == ecodeExplorer && viewItem =~ /file/",
           "group": "navigation"
         }
       ]
