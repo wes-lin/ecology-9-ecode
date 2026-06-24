@@ -62,9 +62,29 @@
         "icon": "$(refresh)"
       },
       {
-        "command": "ecode.downloadFile",
-        "title": "eCode: Download File",
+        "command": "ecode.refreshFolder",
+        "title": "eCode: Refresh Folder",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ecode.download",
+        "title": "eCode: Download",
         "icon": "$(cloud-download)"
+      },
+      {
+        "command": "ecode.openLocalFile",
+        "title": "eCode: Open Local File",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "ecode.compareWithRemote",
+        "title": "eCode: Compare with Remote",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "ecode.deleteItem",
+        "title": "eCode: Delete",
+        "icon": "$(trash)"
       },
       {
         "command": "ecode.openSettings",
@@ -72,13 +92,8 @@
         "icon": "$(gear)"
       },
       {
-        "command": "ecode.downloadSelected",
-        "title": "eCode: Download Selected",
-        "icon": "$(cloud-download)"
-      },
-      {
         "command": "ecode.viewFile",
-        "title": "eCode: View File"
+        "title": "eCode: View Remote File"
       }
     ],
     "menus": {
@@ -94,16 +109,36 @@
           "group": "navigation"
         },
         {
-          "command": "ecode.downloadSelected",
+          "command": "ecode.download",
           "when": "view == ecodeExplorer",
           "group": "navigation"
         }
       ],
       "view/item/context": [
         {
-          "command": "ecode.downloadFile",
-          "when": "view == ecodeExplorer && viewItem == downloadable",
+          "command": "ecode.refreshFolder",
+          "when": "view == ecodeExplorer && (viewItem == folder || viewItem == folder-deletable)",
+          "group": "navigation"
+        },
+        {
+          "command": "ecode.deleteItem",
+          "when": "view == ecodeExplorer && (viewItem == file-deletable || viewItem == folder-deletable)",
+          "group": "navigation"
+        },
+        {
+          "command": "ecode.openLocalFile",
+          "when": "view == ecodeExplorer && viewItem == file",
           "group": "inline"
+        },
+        {
+          "command": "ecode.compareWithRemote",
+          "when": "view == ecodeExplorer && viewItem == file",
+          "group": "navigation"
+        },
+        {
+          "command": "ecode.viewFile",
+          "when": "view == ecodeExplorer && viewItem == file",
+          "group": "navigation"
         }
       ]
     }

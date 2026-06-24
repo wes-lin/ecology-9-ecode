@@ -247,8 +247,11 @@ class EcodeClient {
 
   async downloadFile(remotePath) {
     const res = await this._post('/api/ecode/download', { path: remotePath });
-    // return res.raw;
-    return res;
+    if (!res.ok) {
+      throw new Error(`Download failed: HTTP ${res.status}`);
+    }
+    const arrayBuffer = await res.arrayBuffer();
+    return Buffer.from(arrayBuffer);
   }
 
   _buildUrl(path, params) {

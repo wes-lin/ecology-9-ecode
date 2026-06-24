@@ -16,28 +16,38 @@ function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand('ecode.refresh', () => treeDataProvider.refresh()));
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('ecode.downloadFile', async (item) => {
-      await treeDataProvider.downloadFile(item);
+    vscode.commands.registerCommand('ecode.refreshFolder', (item) => {
+      treeDataProvider.refreshFolder(item);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.download', async () => {
+      await treeDataProvider.download();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.openLocalFile', async (item) => {
+      await treeDataProvider.openLocalFile(item);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.compareWithRemote', async (item) => {
+      await treeDataProvider.compareWithRemote(item);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.deleteItem', async (item) => {
+      await treeDataProvider.deleteItem(item);
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('ecode.viewFile', async (item) => {
       await treeDataProvider.viewFile(item);
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('ecode.downloadSelected', async () => {
-      await treeDataProvider.downloadSelected();
-    })
-  );
-
-  context.subscriptions.push(
-    treeView.onDidChangeCheckboxState((e) => {
-      for (const [item, state] of e.items) {
-        treeDataProvider.setCheckboxState(item, state);
-      }
     })
   );
 

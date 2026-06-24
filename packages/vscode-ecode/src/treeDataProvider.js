@@ -9,7 +9,7 @@ const mkdir = promisify(fs.mkdir);
 const writeFile = promisify(fs.writeFile);
 
 class EcodeNode {
-  constructor(id, label, type, treeType, remotePath, hasChild, appId) {
+  constructor(id, label, type, treeType, remotePath, hasChild, appId, attribute, deletable) {
     this.id = id;
     this.label = label;
     this.type = type; // 'folder' | 'file'
@@ -17,7 +17,8 @@ class EcodeNode {
     this.remotePath = remotePath;
     this.hasChild = hasChild;
     this.appId = appId;
-    this.checkboxState = vscode.TreeItemCheckboxState.Unchecked;
+    this.attribute = attribute;
+    this.deletable = deletable;
   }
 }
 
@@ -34,11 +35,10 @@ class EcodeTreeDataProvider {
 
     // 注册只读 FileSystemProvider（提供面包屑等原生功能）
     this._fileSystemProvider = new EcodeFileSystemProvider(this);
-    this._fsRegistration = vscode.workspace.registerFileSystemProvider(
-      'ecode',
-      this._fileSystemProvider,
-      { isCaseSensitive: false, isReadonly: true }
-    );
+    this._fsRegistration = vscode.workspace.registerFileSystemProvider('ecode', this._fileSystemProvider, {
+      isCaseSensitive: false,
+      isReadonly: true,
+    });
   }
 
   refresh() {
@@ -46,6 +46,15 @@ class EcodeTreeDataProvider {
     this.rootItems = [];
     this._fileContents.clear();
     this._onDidChangeTreeData.fire();
+  }
+
+  refreshFolder(element) {
+    if (!element) {
+      this.refresh();
+      return;
+    }
+    delete element.children;
+    this._onDidChangeTreeData.fire(element);
   }
 
   dispose() {
@@ -64,14 +73,10 @@ class EcodeTreeDataProvider {
     if (!isInfo) {
       treeItem.iconPath = element.type === 'folder' ? new vscode.ThemeIcon('folder') : new vscode.ThemeIcon('file');
       treeItem.resourceUri = vscode.Uri.parse(`ecode:/${element.remotePath}`);
-      const isDownloadableFolder = element.type === 'folder' && element.appId;
-      treeItem.contextValue = isDownloadableFolder ? 'downloadable' : element.type;
+      treeItem.contextValue = element.deletable ? `${element.type}-deletable` : element.type;
       treeItem.tooltip = element.remotePath;
-      if (isDownloadableFolder) {
-        treeItem.checkboxState = element.checkboxState;
-      }
       if (element.type === 'file') {
-        treeItem.command = { command: 'ecode.viewFile', title: 'View File', arguments: [element] };
+        treeItem.command = { command: 'ecode.openLocalFile', title: 'Open Local File', arguments: [element] };
       }
     }
 
@@ -113,50 +118,8 @@ class EcodeTreeDataProvider {
     return [];
   }
 
-  setCheckboxState(element, state) {
-    element.checkboxState = state;
-  }
-
-  getCheckedItems() {
-    const checked = [];
-    const walk = (nodes) => {
-      for (const node of nodes) {
-        if (node.type === 'folder' && node.appId && node.checkboxState === vscode.TreeItemCheckboxState.Checked) {
-          checked.push(node);
-        }
-        if (node.children && node.children.length > 0) {
-          walk(node.children);
-        }
-      }
-    };
-    walk(this.rootItems);
-    return checked;
-  }
-
-  async downloadSelected() {
-    const items = this.getCheckedItems();
-    if (items.length === 0) {
-      vscode.window.showWarningMessage('No folders selected. Check the checkbox next to folders to download.');
-      return;
-    }
-    const confirm = await vscode.window.showWarningMessage(
-      `Download ${items.length} folder(s)?`,
-      { modal: true },
-      'Download'
-    );
-    if (confirm !== 'Download') return;
-
-    let success = 0;
-    let failed = 0;
-    for (const item of items) {
-      try {
-        await this.downloadFile(item);
-        success++;
-      } catch {
-        failed++;
-      }
-    }
-    vscode.window.showInformationMessage(`Batch download complete: ${success} succeeded, ${failed} failed.`);
+  async download() {
+    vscode.window.showInformationMessage('Download is not implemented yet.');
   }
 
   async viewFile(element) {
@@ -174,30 +137,106 @@ class EcodeTreeDataProvider {
     }
   }
 
-  async downloadFile(element) {
+  async openLocalFile(element) {
     try {
-      const config = this._getConfig();
-      const localDir = config.get('localDir', 'src');
-      const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (!workspaceFolder) {
-        vscode.window.showErrorMessage('No workspace folder open.');
-        return;
-      }
-
-      const targetDir = path.join(workspaceFolder, localDir, path.dirname(element.remotePath));
-      await mkdir(targetDir, { recursive: true });
-
-      const client = this._getClient();
-      const buf = await client.downloadFile(element.remotePath);
-
-      const targetPath = path.join(workspaceFolder, localDir, element.remotePath);
-      await mkdir(path.dirname(targetPath), { recursive: true });
-      await writeFile(targetPath, buf);
-
-      vscode.window.showInformationMessage(`Downloaded ${element.remotePath}`);
+      const targetPath = await this._ensureLocalFileFromRemote(element, { overwrite: false });
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(targetPath));
+      await vscode.window.showTextDocument(doc, { preview: false });
     } catch (err) {
-      vscode.window.showErrorMessage(`Download failed: ${err.message}`);
+      vscode.window.showErrorMessage(`Open local file failed: ${err.message}`);
     }
+  }
+
+  async compareWithRemote(element) {
+    try {
+      const targetPath = await this._ensureLocalFileFromRemote(element, { overwrite: false });
+      const client = this._getClient();
+      const remoteContent = await client.viewFile(element.id);
+      const remoteUri = vscode.Uri.from({
+        scheme: 'ecode',
+        path: `/${this._getSafeRelativeRemotePath(element.remotePath).replace(/\\/g, '/')}`,
+        query: `compare=${Date.now()}`,
+      });
+      const localUri = vscode.Uri.file(targetPath);
+
+      this._fileContents.set(remoteUri.toString(), remoteContent.toString('utf-8'));
+      await vscode.commands.executeCommand('vscode.diff', remoteUri, localUri, `${element.label}: Remote ↔ Local`);
+    } catch (err) {
+      vscode.window.showErrorMessage(`Compare failed: ${err.message}`);
+    }
+  }
+
+  async deleteItem(element) {
+    if (!element.deletable) {
+      vscode.window.showWarningMessage('Only items with deletable=true can be deleted.');
+      return;
+    }
+
+    const confirm = await vscode.window.showWarningMessage(
+      `Delete ${element.type} ${element.remotePath}?`,
+      { modal: true },
+      'Delete'
+    );
+    if (confirm !== 'Delete') return;
+
+    vscode.window.showInformationMessage('Delete is not implemented yet.');
+  }
+
+  async _ensureLocalFileFromRemote(element, { overwrite = false } = {}) {
+    const targetPath = this._getLocalPath(element);
+    if (!overwrite && fs.existsSync(targetPath)) {
+      return targetPath;
+    }
+
+    await mkdir(path.dirname(targetPath), { recursive: true });
+    const client = this._getClient();
+    const content = await client.viewFile(element.id);
+    await writeFile(targetPath, content.toString('utf-8'));
+    return targetPath;
+  }
+
+  _getWorkspaceFolderPath() {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceFolder) {
+      throw new Error('No workspace folder open.');
+    }
+    return workspaceFolder;
+  }
+
+  _getLocalRootPath() {
+    const config = this._getConfig();
+    const localDir = config.get('localDir', 'src');
+    return path.resolve(this._getWorkspaceFolderPath(), localDir);
+  }
+
+  _getSafeRelativeRemotePath(remotePath) {
+    const normalized = path.normalize(
+      String(remotePath || '')
+        .replace(/\\/g, '/')
+        .replace(/^\/+/, '')
+    );
+    if (
+      !normalized ||
+      path.isAbsolute(normalized) ||
+      /^[a-zA-Z]:/.test(normalized) ||
+      normalized === '..' ||
+      normalized.startsWith(`..${path.sep}`)
+    ) {
+      throw new Error(`Invalid remote path: ${remotePath}`);
+    }
+    return normalized;
+  }
+
+  _getLocalPath(element) {
+    const localRoot = this._getLocalRootPath();
+    const relativePath = this._getSafeRelativeRemotePath(element.remotePath);
+    const targetPath = path.resolve(localRoot, relativePath);
+    const normalizedRoot = localRoot.toLowerCase();
+    const normalizedTarget = targetPath.toLowerCase();
+    if (normalizedTarget !== normalizedRoot && !normalizedTarget.startsWith(`${normalizedRoot}${path.sep}`)) {
+      throw new Error(`Invalid remote path: ${element.remotePath}`);
+    }
+    return targetPath;
   }
 
   _getConfig() {
@@ -224,9 +263,7 @@ class EcodeTreeDataProvider {
   _mapTree(tree, parentPath = '') {
     if (!Array.isArray(tree)) return [];
     return tree.map((item) => {
-      const remotePath = parentPath
-        ? `${parentPath.replace(/\/$/, '')}/${item.name}`
-        : item.name;
+      const remotePath = parentPath ? `${parentPath.replace(/\/$/, '')}/${item.name}` : item.name;
       return new EcodeNode(
         item.id,
         item.name,
@@ -236,7 +273,9 @@ class EcodeTreeDataProvider {
         item.treeType || '',
         remotePath,
         item.hasChild || false,
-        item.initialAppId
+        item.initialAppId || '',
+        item.attribute || '',
+        !['system', 'jar', 'config', 'resource', 'non-code'].includes(item.attribute)
       );
     });
   }
