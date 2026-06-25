@@ -59,85 +59,93 @@
       {
         "command": "ecode.refresh",
         "title": "eCode: Refresh Explorer",
-        "icon": "$(refresh)"
+        "icon": "$(refresh)",
+        "enablement": "!ecodeExplorer.busy"
       },
       {
         "command": "ecode.refreshFolder",
         "title": "eCode: Refresh Folder",
-        "icon": "$(refresh)"
+        "icon": "$(refresh)",
+        "enablement": "!ecodeExplorer.busy"
       },
       {
         "command": "ecode.download",
         "title": "eCode: Download",
-        "icon": "$(cloud-download)"
+        "icon": "$(cloud-download)",
+        "enablement": "!ecodeExplorer.busy"
       },
       {
         "command": "ecode.openLocalFile",
         "title": "eCode: Open Local File",
-        "icon": "$(go-to-file)"
+        "icon": "$(go-to-file)",
+        "enablement": "!ecodeExplorer.busy"
       },
       {
         "command": "ecode.compareWithRemote",
         "title": "eCode: Compare with Remote",
-        "icon": "$(diff)"
+        "icon": "$(diff)",
+        "enablement": "!ecodeExplorer.busy"
       },
       {
         "command": "ecode.deleteItem",
         "title": "eCode: Delete",
-        "icon": "$(trash)"
+        "icon": "$(trash)",
+        "enablement": "!ecodeExplorer.busy"
       },
       {
         "command": "ecode.openSettings",
         "title": "eCode: Open Settings",
-        "icon": "$(gear)"
+        "icon": "$(gear)",
+        "enablement": "!ecodeExplorer.busy"
       },
       {
         "command": "ecode.viewFile",
-        "title": "eCode: View Remote File"
+        "title": "eCode: View Remote File",
+        "enablement": "!ecodeExplorer.busy"
       }
     ],
     "menus": {
       "view/title": [
         {
           "command": "ecode.refresh",
-          "when": "view == ecodeExplorer",
+          "when": "view == ecodeExplorer && !ecodeExplorer.busy",
           "group": "navigation"
         },
         {
           "command": "ecode.openSettings",
-          "when": "view == ecodeExplorer",
+          "when": "view == ecodeExplorer && !ecodeExplorer.busy",
           "group": "navigation"
         },
         {
           "command": "ecode.download",
-          "when": "view == ecodeExplorer",
+          "when": "view == ecodeExplorer && !ecodeExplorer.busy",
           "group": "navigation"
         }
       ],
       "view/item/context": [
         {
           "command": "ecode.refreshFolder",
-          "when": "view == ecodeExplorer && viewItem =~ /folder/",
+          "when": "view == ecodeExplorer && !ecodeExplorer.busy && viewItem =~ /folder/",
           "group": "navigation"
         },
         {
           "command": "ecode.deleteItem",
-          "when": "view == ecodeExplorer && viewItem =~ /deletable/",
+          "when": "view == ecodeExplorer && !ecodeExplorer.busy && viewItem =~ /deletable/",
           "group": "navigation"
         },
         {
           "command": "ecode.openLocalFile",
-          "when": "view == ecodeExplorer && viewItem =~ /file/",
+          "when": "view == ecodeExplorer && !ecodeExplorer.busy && viewItem =~ /file/",
           "group": "inline"
         },
         {
           "command": "ecode.compareWithRemote",
-          "when": "view == ecodeExplorer && viewItem =~ /file/",
+          "when": "view == ecodeExplorer && !ecodeExplorer.busy && viewItem =~ /file/",
           "group": "navigation"
         },
         {
           "command": "ecode.viewFile",
-          "when": "view == ecodeExplorer && viewItem =~ /file/",
+          "when": "view == ecodeExplorer && !ecodeExplorer.busy && viewItem =~ /file/",
           "group": "navigation"
         }
       ]

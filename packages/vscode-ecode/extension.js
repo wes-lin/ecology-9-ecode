@@ -9,6 +9,7 @@ function activate(context) {
     treeDataProvider,
     showCollapseAll: true,
   });
+  vscode.commands.executeCommand('setContext', 'ecodeExplorer.busy', false);
 
   context.subscriptions.push(treeView);
   context.subscriptions.push(treeDataProvider);

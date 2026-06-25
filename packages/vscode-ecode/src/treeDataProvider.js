@@ -9,7 +9,7 @@ const mkdir = promisify(fs.mkdir);
 const writeFile = promisify(fs.writeFile);
 
 class EcodeNode {
-  constructor(id, label, type, treeType, remotePath, hasChild, appId, attribute, deletable, state) {
+  constructor({ id, label, type, treeType = '', remotePath = '', hasChild = false, appId = '', attribute = '', deletable = false, state = '' }) {
     this.id = id;
     this.label = label;
     this.type = type; // 'folder' | 'file'
@@ -30,6 +30,7 @@ class EcodeTreeDataProvider {
     this.cookieFile = cookieFile;
     this.client = null;
     this.rootItems = [];
+    this._busy = false;
 
     // 文件内容缓存：uri → 内容字符串
     this._fileContents = new Map();
@@ -42,7 +43,12 @@ class EcodeTreeDataProvider {
     });
   }
 
-  refresh() {
+  async refresh() {
+    if (this._busy) {
+      vscode.window.showWarningMessage('eCode Explorer is busy downloading.');
+      return;
+    }
+
     this.client = null;
     this.rootItems = [];
     this._fileContents.clear();
@@ -50,6 +56,11 @@ class EcodeTreeDataProvider {
   }
 
   refreshFolder(element) {
+    if (this._busy) {
+      vscode.window.showWarningMessage('eCode Explorer is busy downloading.');
+      return;
+    }
+
     if (!element) {
       this.refresh();
       return;
@@ -88,6 +99,16 @@ class EcodeTreeDataProvider {
   }
 
   async getChildren(element) {
+    if (this._busy) {
+      if (element?.children) {
+        return element.children;
+      }
+      if (!element && this.rootItems.length > 0) {
+        return this.rootItems;
+      }
+      return [];
+    }
+
     const config = this._getConfig();
     const baseUrl = config.get('baseUrl', 'http://localhost');
     const username = config.get('username', '');
@@ -101,11 +122,11 @@ class EcodeTreeDataProvider {
         const tree = await client.listTree();
         this.rootItems = this._mapTree(tree, '');
         if (this.rootItems.length === 0) {
-          return [new EcodeNode('(empty)', 'info', '', [])];
+          return [new EcodeNode({ label: '(empty)', type: 'info' })];
         }
         return this.rootItems;
       } catch (err) {
-        return [new EcodeNode(`❌ ${err.message}`, 'info', '', [])];
+        return [new EcodeNode({ label: `❌ ${err.message}`, type: 'info' })];
       }
     } else if (element.hasChild) {
       let tree;
@@ -123,10 +144,59 @@ class EcodeTreeDataProvider {
   }
 
   async download() {
-    vscode.window.showInformationMessage('Download is not implemented yet.');
+    if (this._busy) {
+      vscode.window.showWarningMessage('eCode download is already running.');
+      return;
+    }
+
+    await this._setBusy(true);
+    try {
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: 'Downloading eCode source',
+          cancellable: false,
+        },
+        async (progress) => {
+          const nodes = { folders: [], files: [] };
+          progress.report({ message: 'Scanning remote eCode tree...' });
+          await this._collectDownloadNodes(undefined, nodes);
+
+          for (const folder of nodes.folders) {
+            await this._ensureLocalFolderFromRemote(folder);
+          }
+
+          if (nodes.files.length === 0) {
+            progress.report({ increment: 100, message: 'No files found.' });
+            return;
+          }
+
+          const increment = 100 / nodes.files.length;
+          let completed = 0;
+          for (const file of nodes.files) {
+            await this._ensureLocalFileFromRemote(file, { overwrite: true });
+            completed += 1;
+            progress.report({
+              increment,
+              message: `Downloaded ${completed}/${nodes.files.length}: ${file.remotePath}`,
+            });
+          }
+        }
+      );
+      vscode.window.showInformationMessage('eCode source download completed.');
+    } catch (err) {
+      vscode.window.showErrorMessage(`Download failed: ${err.message}`);
+    } finally {
+      await this._setBusy(false);
+    }
   }
 
   async viewFile(element) {
+    if (this._busy) {
+      vscode.window.showWarningMessage('eCode Explorer is busy downloading.');
+      return;
+    }
+
     try {
       const client = this._getClient();
       const buffer = await client.viewFile(element.id);
@@ -142,6 +212,11 @@ class EcodeTreeDataProvider {
   }
 
   async openLocalFile(element) {
+    if (this._busy) {
+      vscode.window.showWarningMessage('eCode Explorer is busy downloading.');
+      return;
+    }
+
     try {
       const targetPath = await this._ensureLocalFileFromRemote(element, { overwrite: false });
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(targetPath));
@@ -152,6 +227,11 @@ class EcodeTreeDataProvider {
   }
 
   async compareWithRemote(element) {
+    if (this._busy) {
+      vscode.window.showWarningMessage('eCode Explorer is busy downloading.');
+      return;
+    }
+
     try {
       const targetPath = await this._ensureLocalFileFromRemote(element, { overwrite: false });
       const client = this._getClient();
@@ -171,6 +251,11 @@ class EcodeTreeDataProvider {
   }
 
   async deleteItem(element) {
+    if (this._busy) {
+      vscode.window.showWarningMessage('eCode Explorer is busy downloading.');
+      return;
+    }
+
     if (!element.deletable) {
       vscode.window.showWarningMessage('Only items with deletable=true can be deleted.');
       return;
@@ -184,6 +269,51 @@ class EcodeTreeDataProvider {
     if (confirm !== 'Delete') return;
 
     vscode.window.showInformationMessage('Delete is not implemented yet.');
+  }
+
+  async _setBusy(value) {
+    this._busy = value;
+    await vscode.commands.executeCommand('setContext', 'ecodeExplorer.busy', value);
+    this._onDidChangeTreeData.fire();
+  }
+
+  async _listRemoteChildren(element) {
+    const client = this._getClient();
+    if (!element) {
+      const tree = await client.listTree();
+      return this._mapTree(tree, '');
+    }
+
+    const tree =
+      element.treeType === 'folder' ? await client.listTree(element.id, '') : await client.listTree('', element.id);
+    return this._mapTree(tree, element.remotePath);
+  }
+
+  async _collectDownloadNodes(element, nodes) {
+    if (!element) {
+      const roots = await this._listRemoteChildren(undefined);
+      for (const root of roots) {
+        await this._collectDownloadNodes(root, nodes);
+      }
+      return;
+    }
+
+    if (element.type === 'folder') {
+      nodes.folders.push(element);
+      const children = await this._listRemoteChildren(element);
+      for (const child of children) {
+        await this._collectDownloadNodes(child, nodes);
+      }
+      return;
+    }
+
+    nodes.files.push(element);
+  }
+
+  async _ensureLocalFolderFromRemote(element) {
+    const targetPath = this._getLocalPath(element);
+    await mkdir(targetPath, { recursive: true });
+    return targetPath;
   }
 
   async _ensureLocalFileFromRemote(element, { overwrite = false } = {}) {
@@ -268,20 +398,18 @@ class EcodeTreeDataProvider {
     if (!Array.isArray(tree)) return [];
     return tree.map((item) => {
       const remotePath = parentPath ? `${parentPath.replace(/\/$/, '')}/${item.name}` : item.name;
-      return new EcodeNode(
-        item.id,
-        item.name,
-        item.treeType === 'folder' || item.businessType === 'type' || item.businessType === 'project'
-          ? 'folder'
-          : 'file',
-        item.treeType || '',
+      return new EcodeNode({
+        id: item.id,
+        label: item.name,
+        type: item.treeType === 'folder' || item.businessType === 'type' || item.businessType === 'project' ? 'folder' : 'file',
+        treeType: item.treeType || '',
         remotePath,
-        item.hasChild || false,
-        item.initialAppId || '',
-        item.attribute || '',
-        !['system', 'jar', 'config', 'resource', 'non-code'].includes(item.attribute),
-        item.state || ''
-      );
+        hasChild: item.hasChild || false,
+        appId: item.initialAppId || '',
+        attribute: item.attribute || '',
+        deletable: !['system', 'jar', 'config', 'resource', 'non-code'].includes(item.attribute),
+        state: item.state || '',
+      });
     });
   }
 }
