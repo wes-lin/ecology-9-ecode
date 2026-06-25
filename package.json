@@ -2,13 +2,14 @@
   "name": "ecode-dev-assistant",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@10.15.0",
   "description": "Monorepo for Ecology 9 ecode local development assistant",
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces",
-    "test": "npm test --workspaces",
+    "build": "pnpm -r run build",
+    "test": "pnpm -r test",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

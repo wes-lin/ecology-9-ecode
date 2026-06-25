@@ -4,6 +4,9 @@
   "description": "Browse and download Ecology 9 ecode files from VS Code",
   "version": "0.1.0",
   "publisher": "ecode-dev-assistant",
+  "repository": {
+    "url": "https://github.com/wes-lin/ecology-9-ecode/tree/main/packages/vscode-ecode"
+  },
   "engines": {
     "vscode": "^1.83.0"
   },
@@ -11,6 +14,17 @@
     "Other"
   ],
   "main": "./extension.js",
+  "activationEvents": [
+    "onView:ecodeExplorer",
+    "onCommand:ecode.refresh",
+    "onCommand:ecode.refreshFolder",
+    "onCommand:ecode.download",
+    "onCommand:ecode.openLocalFile",
+    "onCommand:ecode.compareWithRemote",
+    "onCommand:ecode.deleteItem",
+    "onCommand:ecode.openSettings",
+    "onCommand:ecode.viewFile"
+  ],
   "contributes": {
     "configuration": {
       "title": "eCode",
@@ -152,14 +166,15 @@
     }
   },
   "scripts": {
-    "build": "echo 'No build step required'",
+    "package": "vsce package --out releases/",
     "lint": "echo 'Run lint from root'",
     "test": "echo 'No tests yet'"
   },
   "dependencies": {
-    "ecode-sdk": "^0.1.0"
+    "ecode-sdk": "workspace:^"
   },
   "devDependencies": {
-    "@types/vscode": "^1.80.0"
+    "@types/vscode": "^1.80.0",
+    "vsce": "^2.15.0"
   }
 }
