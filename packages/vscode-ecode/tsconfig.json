@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": false,
+    "noEmit": true,
+    "types": ["node", "vscode"],
+    "baseUrl": ".",
+    "paths": {
+      "ecode-sdk": ["../ecode-sdk/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "references": [{ "path": "../ecode-sdk" }]
+}
