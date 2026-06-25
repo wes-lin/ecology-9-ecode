@@ -1,15 +1,77 @@
-const vscode = require('vscode');
-const path = require('path');
-const fs = require('fs');
-const { promisify } = require('util');
-const { EcodeClient, EcodeLogger } = require('ecode-sdk');
-const { EcodeFileSystemProvider } = require('./fileSystemProvider');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { promisify } from 'node:util';
+import * as vscode from 'vscode';
+import { EcodeClient, EcodeLogger } from 'ecode-sdk';
+import { EcodeFileSystemProvider } from './fileSystemProvider';
 
 const mkdir = promisify(fs.mkdir);
 const writeFile = promisify(fs.writeFile);
 
-class EcodeNode {
-  constructor({ id, label, type, treeType = '', remotePath = '', hasChild = false, appId = '', attribute = '', deletable = false, state = '' }) {
+type EcodeNodeType = 'folder' | 'file' | 'info';
+
+type EcodeNodeOptions = {
+  id?: string;
+  label: string;
+  type: EcodeNodeType;
+  treeType?: string;
+  remotePath?: string;
+  hasChild?: boolean;
+  appId?: string;
+  attribute?: string;
+  deletable?: boolean;
+  state?: string;
+};
+
+type RemoteTreeItem = {
+  id?: string;
+  name?: string;
+  treeType?: string;
+  businessType?: string;
+  hasChild?: boolean;
+  initialAppId?: string;
+  attribute?: string;
+  state?: string;
+};
+
+type DownloadNodes = {
+  folders: EcodeNode[];
+  files: EcodeNode[];
+};
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function toText(content: string | Buffer): string {
+  return Buffer.isBuffer(content) ? content.toString('utf8') : String(content);
+}
+
+export class EcodeNode {
+  id?: string;
+  label: string;
+  type: EcodeNodeType;
+  treeType: string;
+  remotePath: string;
+  hasChild: boolean;
+  appId: string;
+  attribute: string;
+  deletable: boolean;
+  state: string;
+  children?: EcodeNode[];
+
+  constructor({
+    id,
+    label,
+    type,
+    treeType = '',
+    remotePath = '',
+    hasChild = false,
+    appId = '',
+    attribute = '',
+    deletable = false,
+    state = '',
+  }: EcodeNodeOptions) {
     this.id = id;
     this.label = label;
     this.type = type; // 'folder' | 'file'
@@ -23,27 +85,30 @@ class EcodeNode {
   }
 }
 
-class EcodeTreeDataProvider {
-  constructor(cookieFile) {
-    this._onDidChangeTreeData = new vscode.EventEmitter();
-    this.onDidChangeTreeData = this._onDidChangeTreeData.event;
-    this.cookieFile = cookieFile;
-    this.client = null;
-    this.rootItems = [];
-    this._busy = false;
+export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>, vscode.Disposable {
+  private _onDidChangeTreeData = new vscode.EventEmitter<EcodeNode | undefined | null | void>();
+  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+  readonly cookieFile: string;
+  client: EcodeClient | null = null;
+  rootItems: EcodeNode[] = [];
+  private _busy = false;
 
-    // 文件内容缓存：uri → 内容字符串
-    this._fileContents = new Map();
+  // 文件内容缓存：uri → 内容字符串
+  _fileContents = new Map<string, string>();
+  private _fsRegistration: vscode.Disposable;
+
+  constructor(cookieFile: string) {
+    this.cookieFile = cookieFile;
 
     // 注册只读 FileSystemProvider（提供面包屑等原生功能）
-    this._fileSystemProvider = new EcodeFileSystemProvider(this);
-    this._fsRegistration = vscode.workspace.registerFileSystemProvider('ecode', this._fileSystemProvider, {
+    const fileSystemProvider = new EcodeFileSystemProvider(this);
+    this._fsRegistration = vscode.workspace.registerFileSystemProvider('ecode', fileSystemProvider, {
       isCaseSensitive: false,
       isReadonly: true,
     });
   }
 
-  async refresh() {
+  async refresh(): Promise<void> {
     if (this._busy) {
       vscode.window.showWarningMessage('eCode Explorer is busy downloading.');
       return;
@@ -55,7 +120,7 @@ class EcodeTreeDataProvider {
     this._onDidChangeTreeData.fire();
   }
 
-  refreshFolder(element) {
+  refreshFolder(element?: EcodeNode): void {
     if (this._busy) {
       vscode.window.showWarningMessage('eCode Explorer is busy downloading.');
       return;
@@ -69,12 +134,12 @@ class EcodeTreeDataProvider {
     this._onDidChangeTreeData.fire(element);
   }
 
-  dispose() {
+  dispose(): void {
     this._fsRegistration.dispose();
     this._onDidChangeTreeData.dispose();
   }
 
-  getTreeItem(element) {
+  getTreeItem(element: EcodeNode): vscode.TreeItem {
     const isInfo = element.type === 'info';
     const isFile = element.type === 'file' || !element.hasChild;
     const treeItem = new vscode.TreeItem(
@@ -98,14 +163,10 @@ class EcodeTreeDataProvider {
     return treeItem;
   }
 
-  async getChildren(element) {
+  async getChildren(element?: EcodeNode): Promise<EcodeNode[]> {
     if (this._busy) {
-      if (element?.children) {
-        return element.children;
-      }
-      if (!element && this.rootItems.length > 0) {
-        return this.rootItems;
-      }
+      if (element?.children) return element.children;
+      if (!element && this.rootItems.length > 0) return this.rootItems;
       return [];
     }
 
@@ -116,6 +177,7 @@ class EcodeTreeDataProvider {
     if (!baseUrl || baseUrl === 'http://localhost' || !username || !password) {
       return [];
     }
+
     const client = this._getClient();
     if (!element) {
       try {
@@ -125,16 +187,16 @@ class EcodeTreeDataProvider {
           return [new EcodeNode({ label: '(empty)', type: 'info' })];
         }
         return this.rootItems;
-      } catch (err) {
-        return [new EcodeNode({ label: `❌ ${err.message}`, type: 'info' })];
+      } catch (error) {
+        return [new EcodeNode({ label: `Error: ${getErrorMessage(error)}`, type: 'info' })];
       }
-    } else if (element.hasChild) {
-      let tree;
-      if (element.treeType === 'folder') {
-        tree = await client.listTree(element.id, '');
-      } else {
-        tree = await client.listTree('', element.id);
-      }
+    }
+
+    if (element.hasChild) {
+      const tree =
+        element.treeType === 'folder'
+          ? await client.listTree(element.id ?? '', '')
+          : await client.listTree('', element.id ?? '');
       const children = this._mapTree(tree, element.remotePath);
       element.children = children;
       return children;
@@ -143,7 +205,7 @@ class EcodeTreeDataProvider {
     return [];
   }
 
-  async download() {
+  async download(): Promise<void> {
     if (this._busy) {
       vscode.window.showWarningMessage('eCode download is already running.');
       return;
@@ -158,7 +220,7 @@ class EcodeTreeDataProvider {
           cancellable: false,
         },
         async (progress) => {
-          const nodes = { folders: [], files: [] };
+          const nodes: DownloadNodes = { folders: [], files: [] };
           progress.report({ message: 'Scanning remote eCode tree...' });
           await this._collectDownloadNodes(undefined, nodes);
 
@@ -184,14 +246,14 @@ class EcodeTreeDataProvider {
         }
       );
       vscode.window.showInformationMessage('eCode source download completed.');
-    } catch (err) {
-      vscode.window.showErrorMessage(`Download failed: ${err.message}`);
+    } catch (error) {
+      vscode.window.showErrorMessage(`Download failed: ${getErrorMessage(error)}`);
     } finally {
       await this._setBusy(false);
     }
   }
 
-  async viewFile(element) {
+  async viewFile(element: EcodeNode): Promise<void> {
     if (this._busy) {
       vscode.window.showWarningMessage('eCode Explorer is busy downloading.');
       return;
@@ -199,19 +261,18 @@ class EcodeTreeDataProvider {
 
     try {
       const client = this._getClient();
-      const buffer = await client.viewFile(element.id);
-
+      const content = await client.viewFile(element.id ?? '');
       const uri = vscode.Uri.parse(`ecode:/${element.remotePath}`);
-      this._fileContents.set(uri.toString(), buffer.toString('utf-8'));
+      this._fileContents.set(uri.toString(), toText(content));
 
       const doc = await vscode.workspace.openTextDocument(uri);
       await vscode.window.showTextDocument(doc, { preview: false });
-    } catch (err) {
-      vscode.window.showErrorMessage(`View file failed: ${err.message}`);
+    } catch (error) {
+      vscode.window.showErrorMessage(`View file failed: ${getErrorMessage(error)}`);
     }
   }
 
-  async openLocalFile(element) {
+  async openLocalFile(element: EcodeNode): Promise<void> {
     if (this._busy) {
       vscode.window.showWarningMessage('eCode Explorer is busy downloading.');
       return;
@@ -221,12 +282,12 @@ class EcodeTreeDataProvider {
       const targetPath = await this._ensureLocalFileFromRemote(element, { overwrite: false });
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(targetPath));
       await vscode.window.showTextDocument(doc, { preview: false });
-    } catch (err) {
-      vscode.window.showErrorMessage(`Open local file failed: ${err.message}`);
+    } catch (error) {
+      vscode.window.showErrorMessage(`Open local file failed: ${getErrorMessage(error)}`);
     }
   }
 
-  async compareWithRemote(element) {
+  async compareWithRemote(element: EcodeNode): Promise<void> {
     if (this._busy) {
       vscode.window.showWarningMessage('eCode Explorer is busy downloading.');
       return;
@@ -235,7 +296,7 @@ class EcodeTreeDataProvider {
     try {
       const targetPath = await this._ensureLocalFileFromRemote(element, { overwrite: false });
       const client = this._getClient();
-      const remoteContent = await client.viewFile(element.id);
+      const remoteContent = await client.viewFile(element.id ?? '');
       const remoteUri = vscode.Uri.from({
         scheme: 'ecode',
         path: `/${this._getSafeRelativeRemotePath(element.remotePath).replace(/\\/g, '/')}`,
@@ -243,14 +304,14 @@ class EcodeTreeDataProvider {
       });
       const localUri = vscode.Uri.file(targetPath);
 
-      this._fileContents.set(remoteUri.toString(), remoteContent.toString('utf-8'));
+      this._fileContents.set(remoteUri.toString(), toText(remoteContent));
       await vscode.commands.executeCommand('vscode.diff', remoteUri, localUri, `${element.label}: Remote ↔ Local`);
-    } catch (err) {
-      vscode.window.showErrorMessage(`Compare failed: ${err.message}`);
+    } catch (error) {
+      vscode.window.showErrorMessage(`Compare failed: ${getErrorMessage(error)}`);
     }
   }
 
-  async deleteItem(element) {
+  async deleteItem(element: EcodeNode): Promise<void> {
     if (this._busy) {
       vscode.window.showWarningMessage('eCode Explorer is busy downloading.');
       return;
@@ -271,13 +332,13 @@ class EcodeTreeDataProvider {
     vscode.window.showInformationMessage('Delete is not implemented yet.');
   }
 
-  async _setBusy(value) {
+  async _setBusy(value: boolean): Promise<void> {
     this._busy = value;
     await vscode.commands.executeCommand('setContext', 'ecodeExplorer.busy', value);
     this._onDidChangeTreeData.fire();
   }
 
-  async _listRemoteChildren(element) {
+  async _listRemoteChildren(element?: EcodeNode): Promise<EcodeNode[]> {
     const client = this._getClient();
     if (!element) {
       const tree = await client.listTree();
@@ -285,11 +346,13 @@ class EcodeTreeDataProvider {
     }
 
     const tree =
-      element.treeType === 'folder' ? await client.listTree(element.id, '') : await client.listTree('', element.id);
+      element.treeType === 'folder'
+        ? await client.listTree(element.id ?? '', '')
+        : await client.listTree('', element.id ?? '');
     return this._mapTree(tree, element.remotePath);
   }
 
-  async _collectDownloadNodes(element, nodes) {
+  async _collectDownloadNodes(element: EcodeNode | undefined, nodes: DownloadNodes): Promise<void> {
     if (!element) {
       const roots = await this._listRemoteChildren(undefined);
       for (const root of roots) {
@@ -310,13 +373,16 @@ class EcodeTreeDataProvider {
     nodes.files.push(element);
   }
 
-  async _ensureLocalFolderFromRemote(element) {
+  async _ensureLocalFolderFromRemote(element: EcodeNode): Promise<string> {
     const targetPath = this._getLocalPath(element);
     await mkdir(targetPath, { recursive: true });
     return targetPath;
   }
 
-  async _ensureLocalFileFromRemote(element, { overwrite = false } = {}) {
+  async _ensureLocalFileFromRemote(
+    element: EcodeNode,
+    { overwrite = false }: { overwrite?: boolean } = {}
+  ): Promise<string> {
     const targetPath = this._getLocalPath(element);
     if (!overwrite && fs.existsSync(targetPath)) {
       return targetPath;
@@ -324,12 +390,12 @@ class EcodeTreeDataProvider {
 
     await mkdir(path.dirname(targetPath), { recursive: true });
     const client = this._getClient();
-    const content = await client.viewFile(element.id);
-    await writeFile(targetPath, content.toString('utf-8'));
+    const content = await client.viewFile(element.id ?? '');
+    await writeFile(targetPath, toText(content));
     return targetPath;
   }
 
-  _getWorkspaceFolderPath() {
+  _getWorkspaceFolderPath(): string {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!workspaceFolder) {
       throw new Error('No workspace folder open.');
@@ -337,13 +403,13 @@ class EcodeTreeDataProvider {
     return workspaceFolder;
   }
 
-  _getLocalRootPath() {
+  _getLocalRootPath(): string {
     const config = this._getConfig();
     const localDir = config.get('localDir', 'src');
     return path.resolve(this._getWorkspaceFolderPath(), localDir);
   }
 
-  _getSafeRelativeRemotePath(remotePath) {
+  _getSafeRelativeRemotePath(remotePath: string): string {
     const normalized = path.normalize(
       String(remotePath || '')
         .replace(/\\/g, '/')
@@ -361,7 +427,7 @@ class EcodeTreeDataProvider {
     return normalized;
   }
 
-  _getLocalPath(element) {
+  _getLocalPath(element: EcodeNode): string {
     const localRoot = this._getLocalRootPath();
     const relativePath = this._getSafeRelativeRemotePath(element.remotePath);
     const targetPath = path.resolve(localRoot, relativePath);
@@ -373,11 +439,11 @@ class EcodeTreeDataProvider {
     return targetPath;
   }
 
-  _getConfig() {
+  _getConfig(): vscode.WorkspaceConfiguration {
     return vscode.workspace.getConfiguration('ecode');
   }
 
-  _getClient() {
+  _getClient(): EcodeClient {
     if (!this.client) {
       const config = this._getConfig();
       this.client = new EcodeClient({
@@ -394,24 +460,27 @@ class EcodeTreeDataProvider {
     return this.client;
   }
 
-  _mapTree(tree, parentPath = '') {
+  _mapTree(tree: unknown[], parentPath = ''): EcodeNode[] {
     if (!Array.isArray(tree)) return [];
-    return tree.map((item) => {
-      const remotePath = parentPath ? `${parentPath.replace(/\/$/, '')}/${item.name}` : item.name;
+    return tree.map((rawItem) => {
+      const item = rawItem as RemoteTreeItem;
+      const name = item.name || '';
+      const remotePath = parentPath ? `${parentPath.replace(/\/$/, '')}/${name}` : name;
       return new EcodeNode({
         id: item.id,
-        label: item.name,
-        type: item.treeType === 'folder' || item.businessType === 'type' || item.businessType === 'project' ? 'folder' : 'file',
+        label: name,
+        type:
+          item.treeType === 'folder' || item.businessType === 'type' || item.businessType === 'project'
+            ? 'folder'
+            : 'file',
         treeType: item.treeType || '',
         remotePath,
         hasChild: item.hasChild || false,
         appId: item.initialAppId || '',
         attribute: item.attribute || '',
-        deletable: !['system', 'jar', 'config', 'resource', 'non-code'].includes(item.attribute),
+        deletable: !['system', 'jar', 'config', 'resource', 'non-code'].includes(item.attribute || ''),
         state: item.state || '',
       });
     });
   }
 }
-
-module.exports = { EcodeTreeDataProvider, EcodeNode };

@@ -6,7 +6,7 @@
       "type": "extensionHost",
       "request": "launch",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}/packages/vscode-ecode"],
-      "outFiles": ["${workspaceFolder}/packages/vscode-ecode/**/*.js"]
+      "outFiles": ["${workspaceFolder}/packages/vscode-ecode/dist/**/*.js"]
     }
   ]
 }

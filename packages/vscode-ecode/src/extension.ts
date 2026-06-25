@@ -1,8 +1,8 @@
-const vscode = require('vscode');
-const path = require('path');
-const { EcodeTreeDataProvider } = require('./src/treeDataProvider');
+import * as path from 'node:path';
+import * as vscode from 'vscode';
+import { EcodeTreeDataProvider, type EcodeNode } from './providers/treeDataProvider';
 
-function activate(context) {
+export function activate(context: vscode.ExtensionContext): void {
   const cookieFile = path.join(context.globalStorageUri.fsPath, 'cookies.json');
   const treeDataProvider = new EcodeTreeDataProvider(cookieFile);
   const treeView = vscode.window.createTreeView('ecodeExplorer', {
@@ -11,13 +11,11 @@ function activate(context) {
   });
   vscode.commands.executeCommand('setContext', 'ecodeExplorer.busy', false);
 
-  context.subscriptions.push(treeView);
-  context.subscriptions.push(treeDataProvider);
-
+  context.subscriptions.push(treeView, treeDataProvider);
   context.subscriptions.push(vscode.commands.registerCommand('ecode.refresh', () => treeDataProvider.refresh()));
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('ecode.refreshFolder', (item) => {
+    vscode.commands.registerCommand('ecode.refreshFolder', (item?: EcodeNode) => {
       treeDataProvider.refreshFolder(item);
     })
   );
@@ -29,25 +27,25 @@ function activate(context) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('ecode.openLocalFile', async (item) => {
+    vscode.commands.registerCommand('ecode.openLocalFile', async (item: EcodeNode) => {
       await treeDataProvider.openLocalFile(item);
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('ecode.compareWithRemote', async (item) => {
+    vscode.commands.registerCommand('ecode.compareWithRemote', async (item: EcodeNode) => {
       await treeDataProvider.compareWithRemote(item);
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('ecode.deleteItem', async (item) => {
+    vscode.commands.registerCommand('ecode.deleteItem', async (item: EcodeNode) => {
       await treeDataProvider.deleteItem(item);
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('ecode.viewFile', async (item) => {
+    vscode.commands.registerCommand('ecode.viewFile', async (item: EcodeNode) => {
       await treeDataProvider.viewFile(item);
     })
   );
@@ -59,12 +57,12 @@ function activate(context) {
   );
 
   context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((e) => {
+    vscode.workspace.onDidChangeConfiguration((event) => {
       if (
-        e.affectsConfiguration('ecode.baseUrl') ||
-        e.affectsConfiguration('ecode.username') ||
-        e.affectsConfiguration('ecode.password') ||
-        e.affectsConfiguration('ecode.localDir')
+        event.affectsConfiguration('ecode.baseUrl') ||
+        event.affectsConfiguration('ecode.username') ||
+        event.affectsConfiguration('ecode.password') ||
+        event.affectsConfiguration('ecode.localDir')
       ) {
         treeDataProvider.refresh();
       }
@@ -72,11 +70,6 @@ function activate(context) {
   );
 }
 
-function deactivate() {
+export function deactivate(): void {
   // cleanup if needed
 }
-
-module.exports = {
-  activate,
-  deactivate,
-};

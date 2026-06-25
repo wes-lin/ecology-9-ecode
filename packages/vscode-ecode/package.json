@@ -2,7 +2,8 @@
   "name": "vscode-ecode",
   "displayName": "eCode Explorer",
   "description": "Browse and download Ecology 9 ecode files from VS Code",
-  "version": "0.1.0",
+  "icon": "assets/ecode.png",
+  "version": "0.0.1",
   "publisher": "ecode-dev-assistant",
   "repository": {
     "url": "https://github.com/wes-lin/ecology-9-ecode/tree/main/packages/vscode-ecode"
@@ -13,18 +14,7 @@
   "categories": [
     "Other"
   ],
-  "main": "./extension.js",
-  "activationEvents": [
-    "onView:ecodeExplorer",
-    "onCommand:ecode.refresh",
-    "onCommand:ecode.refreshFolder",
-    "onCommand:ecode.download",
-    "onCommand:ecode.openLocalFile",
-    "onCommand:ecode.compareWithRemote",
-    "onCommand:ecode.deleteItem",
-    "onCommand:ecode.openSettings",
-    "onCommand:ecode.viewFile"
-  ],
+  "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
       "title": "eCode",
@@ -166,15 +156,17 @@
     }
   },
   "scripts": {
-    "package": "vsce package --out releases/",
+    "build": "node esbuild.js",
+    "build:production": "node esbuild.js --production",
+    "vscode:prepublish": "pnpm run build:production",
+    "package": "pnpm run build:production && node scripts/ensure-releases-dir.js && vsce package --no-dependencies --out releases",
     "lint": "echo 'Run lint from root'",
     "test": "echo 'No tests yet'"
   },
-  "dependencies": {
-    "ecode-sdk": "workspace:^"
-  },
+  "license": "ISC",
   "devDependencies": {
     "@types/vscode": "^1.80.0",
-    "vsce": "^2.15.0"
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.1"
   }
 }

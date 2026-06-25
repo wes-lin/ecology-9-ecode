@@ -1,23 +1,48 @@
-const { createReadStream, readFileSync, writeFileSync, existsSync, mkdirSync } = require('fs');
-const { dirname } = require('path');
-const { URL } = require('url');
-const FormData = require('form-data');
-const crypto = require('crypto');
-const { EcodeLogger, NOOP_LOGGER } = require('./logger.js');
+import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { URL } from 'node:url';
+import crypto from 'node:crypto';
+import FormData from 'form-data';
+import { EcodeLogger, type EcodeLoggerLike, type EcodeLoggerOptions, NOOP_LOGGER } from './logger';
+
+type PrimitiveParam = string | number | boolean | null | undefined;
+type Params = Record<string, PrimitiveParam>;
+type RequestBody = BodyInit | FormData | Params;
+
+type RequestOptions = {
+  method?: string;
+  params?: Params;
+  headers?: Record<string, string>;
+  body?: RequestBody;
+};
+
+type RsaInfo = {
+  rsa_pub: string;
+  rsa_code: string;
+  rsa_flag: string;
+};
+
+export type EcodeClientOptions = {
+  baseUrl?: string;
+  username?: string;
+  password?: string;
+  cookieFile?: string | null;
+  logger?: EcodeLogger | EcodeLoggerLike | EcodeLoggerOptions;
+};
 
 /**
  * 将裸 base64 公钥字符串包装为合法 PEM 格式（每 64 字符换行）
- * @param {string} pubKey  纯 base64 公钥内容（不含 PEM 头尾）
- * @returns {string}  合法的 PEM 字符串
+ * @param pubKey 纯 base64 公钥内容（不含 PEM 头尾）
+ * @returns 合法的 PEM 字符串
  */
-function wrapPem(pubKey) {
+function wrapPem(pubKey: string): string {
   // 去掉可能已有的换行和头尾标记，取纯 base64
   const raw = pubKey
     .replace(/-----BEGIN[^-]+-----/g, '')
     .replace(/-----END[^-]+-----/g, '')
     .replace(/[\s\r\n]/g, '');
 
-  const lines = [];
+  const lines: string[] = [];
   for (let i = 0; i < raw.length; i += 64) {
     lines.push(raw.substring(i, i + 64));
   }
@@ -26,11 +51,11 @@ function wrapPem(pubKey) {
 
 /**
  * RSA 加密（PKCS#1 v1.5 padding，与 JSEncrypt 行为一致）
- * @param {string} pubKey  纯 base64 公钥或完整 PEM
- * @param {string} content  待加密明文
- * @returns {string}  base64 编码的密文
+ * @param pubKey 纯 base64 公钥或完整 PEM
+ * @param content 待加密明文
+ * @returns base64 编码的密文
  */
-function rsaEncrypt(pubKey, content) {
+function rsaEncrypt(pubKey: string, content: string): string {
   const pem = pubKey.includes('-----BEGIN') ? pubKey : wrapPem(pubKey);
   const buffer = Buffer.from(content, 'utf8');
   const encrypted = crypto.publicEncrypt(
@@ -43,12 +68,36 @@ function rsaEncrypt(pubKey, content) {
   return encrypted.toString('base64');
 }
 
-class CookieJar {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
+function getSetCookieHeaders(headers: Headers): string[] {
+  const compatibleHeaders = headers as Headers & {
+    getSetCookie?: () => string[];
+    raw?: () => Record<string, string[]>;
+  };
+
+  if (typeof compatibleHeaders.getSetCookie === 'function') {
+    return compatibleHeaders.getSetCookie();
+  }
+
+  if (typeof compatibleHeaders.raw === 'function') {
+    return compatibleHeaders.raw()['set-cookie'] ?? [];
+  }
+
+  const single = headers.get('set-cookie');
+  return single ? [single] : [];
+}
+
+export class CookieJar {
+  cookies: Map<string, string>;
+
   constructor() {
     this.cookies = new Map();
   }
 
-  setCookie(setCookieHeader) {
+  setCookie(setCookieHeader?: string | string[] | null): void {
     if (!setCookieHeader) return;
 
     const cookies = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
@@ -61,20 +110,20 @@ class CookieJar {
     }
   }
 
-  getCookieString() {
+  getCookieString(): string {
     return Array.from(this.cookies.entries())
       .map(([name, value]) => `${name}=${value}`)
       .join('; ');
   }
 
-  loadFromFile(filePath) {
+  loadFromFile(filePath?: string | null): void {
     if (!filePath || !existsSync(filePath)) return;
     try {
       const content = readFileSync(filePath, 'utf-8');
-      const data = JSON.parse(content);
-      if (data && typeof data === 'object') {
+      const data = JSON.parse(content) as unknown;
+      if (isRecord(data)) {
         for (const [name, value] of Object.entries(data)) {
-          this.cookies.set(name, value);
+          this.cookies.set(name, String(value));
         }
       }
     } catch {
@@ -82,7 +131,7 @@ class CookieJar {
     }
   }
 
-  saveToFile(filePath) {
+  saveToFile(filePath?: string | null): void {
     if (!filePath) return;
     const data = Object.fromEntries(this.cookies.entries());
     const dir = dirname(filePath);
@@ -92,25 +141,32 @@ class CookieJar {
     writeFileSync(filePath, JSON.stringify(data, null, 2));
   }
 
-  clear() {
+  clear(): void {
     this.cookies.clear();
   }
 }
 
-class EcodeClient {
+export class EcodeClient {
+  baseUrl: string;
+  username: string;
+  password: string;
+  cookieFile: string | null;
+  jar: CookieJar;
+  logger: EcodeLogger | EcodeLoggerLike;
+
   /**
-   * @param {object}  [options]
-   * @param {string}  [options.baseUrl]
-   * @param {string}  [options.username]
-   * @param {string}  [options.password]
-   * @param {string}  [options.cookieFile]
-   * @param {EcodeLogger|object} [options.logger]
+   * @param options
+   * @param options.baseUrl
+   * @param options.username
+   * @param options.password
+   * @param options.cookieFile
+   * @param options.logger
    *   传入已实例化的 EcodeLogger，或一个符合相同接口的对象。
    *   也可以传入 { level, file, console, colors, redact } 配置对象，
    *   SDK 会自动构造 EcodeLogger。
    *   不传则静默（不打印任何日志）。
    */
-  constructor(options = {}) {
+  constructor(options: EcodeClientOptions = {}) {
     this.baseUrl = options.baseUrl || 'http://localhost';
     this.username = options.username || '';
     this.password = options.password || '';
@@ -122,7 +178,7 @@ class EcodeClient {
     const loggerOpt = options.logger;
     if (!loggerOpt) {
       this.logger = NOOP_LOGGER;
-    } else if (loggerOpt instanceof EcodeLogger || typeof loggerOpt.logRequest === 'function') {
+    } else if (loggerOpt instanceof EcodeLogger || 'logRequest' in loggerOpt) {
       // 已是 logger 实例或自定义兼容对象，直接使用
       this.logger = loggerOpt;
     } else {
@@ -131,26 +187,25 @@ class EcodeClient {
     }
   }
 
-  isLoggedIn() {
+  isLoggedIn(): boolean {
     return !!this.jar.getCookieString();
   }
 
-  getRsaInfo() {
-    return fetch(`${this.baseUrl}/rsa/weaver.rsa.GetRsaInfo`).then((res) => res.json());
+  getRsaInfo(): Promise<RsaInfo> {
+    return fetch(`${this.baseUrl}/rsa/weaver.rsa.GetRsaInfo`).then((res) => res.json() as Promise<RsaInfo>);
   }
 
-  encryptWithRsa(rsaInfo, text) {
+  encryptWithRsa(rsaInfo: RsaInfo, text: string): string {
     const { rsa_pub, rsa_code, rsa_flag } = rsaInfo;
-    let data = null;
+    let data = '';
     const groupLength = 240;
     if (text.length > groupLength) {
-      //需要分段加密
-      data = '';
+      // 需要分段加密
       const length = text.length;
       const groups = Math.floor(length / groupLength) + 1;
       for (let i = 0; i < groups; i++) {
         let v = '';
-        if (i != groups - 1) {
+        if (i !== groups - 1) {
           v = text.substring(i * groupLength, (i + 1) * groupLength);
         } else {
           v = text.substring(i * groupLength);
@@ -165,7 +220,7 @@ class EcodeClient {
     return data;
   }
 
-  async login() {
+  async login(): Promise<unknown> {
     this.logger.info('Logging in…', { username: this.username });
 
     const rsaInfo = await this.getRsaInfo();
@@ -191,7 +246,7 @@ class EcodeClient {
       this.logger.error(`Login failed: HTTP ${res.status}`);
       throw new Error(`Login failed: HTTP ${res.status}`);
     }
-    const resData = await res.json();
+    const resData = (await res.json()) as Record<string, unknown>;
 
     if (resData.msgcode === '0') {
       this.logger.info('Login successful');
@@ -201,7 +256,7 @@ class EcodeClient {
     }
 
     this.jar.clear();
-    this.jar.setCookie(res.headers.getSetCookie());
+    this.jar.setCookie(getSetCookieHeaders(res.headers));
 
     if (!this.jar.getCookieString()) {
       throw new Error('Login succeeded but server did not set a session cookie.');
@@ -211,7 +266,7 @@ class EcodeClient {
     return resData;
   }
 
-  async logout() {
+  async logout(): Promise<void> {
     this.logger.info('Logging out');
     this.jar.clear();
     if (this.cookieFile) {
@@ -219,10 +274,10 @@ class EcodeClient {
     }
   }
 
-  async listTree(folderId = '', typeId = '') {
+  async listTree(folderId = '', typeId = ''): Promise<unknown[]> {
     const res = await this._get('/api/ecode/type/tree', { folderId, typeId });
-    const treeData = await res.json();
-    return [].concat(
+    const treeData = (await res.json()) as Record<string, unknown[]>;
+    return ([] as unknown[]).concat(
       treeData.system || [],
       treeData.typeList || [],
       treeData.childFolder || [],
@@ -230,22 +285,20 @@ class EcodeClient {
     );
   }
 
-  async viewFile(id) {
+  async viewFile(id: string): Promise<string | Buffer> {
     const res = await this._get('/api/cloudstore/ecode/one', { id });
-    const resData = await res.json();
-    return resData.data.content;
+    const resData = (await res.json()) as { data?: { content?: string | Buffer } };
+    return resData.data?.content ?? '';
   }
 
-  async uploadFile(localPath, remotePath) {
+  async uploadFile(localPath: string, remotePath: string): Promise<Response> {
     const form = new FormData();
     form.append('path', remotePath);
     form.append('file', createReadStream(localPath));
-    const res = await this._post('/api/ecode/upload', form, form.getHeaders());
-    // return this._parseJson(res);
-    return res;
+    return this._post('/api/ecode/upload', form, form.getHeaders());
   }
 
-  async downloadFile(remotePath) {
+  async downloadFile(remotePath: string): Promise<Buffer> {
     const res = await this._post('/api/ecode/download', { path: remotePath });
     if (!res.ok) {
       throw new Error(`Download failed: HTTP ${res.status}`);
@@ -254,27 +307,29 @@ class EcodeClient {
     return Buffer.from(arrayBuffer);
   }
 
-  _buildUrl(path, params) {
+  _buildUrl(path: string, params?: Params): string {
     const base = this.baseUrl.replace(/\/$/, '');
     const url = new URL(base + path);
     if (params && typeof params === 'object') {
       for (const [key, value] of Object.entries(params)) {
         if (value !== undefined && value !== null) {
-          url.searchParams.append(key, value);
+          url.searchParams.append(key, String(value));
         }
       }
     }
     return url.toString();
   }
 
-  _buildFetchOptions(options) {
-    const headers = { ...options.headers };
+  _buildFetchOptions(options: RequestOptions): { headers: Record<string, string>; body?: BodyInit } {
+    const headers = { ...(options.headers || {}) };
     let body = options.body;
 
-    if (body && typeof body === 'object' && !(body instanceof FormData)) {
+    if (body && typeof body === 'object' && !(body instanceof FormData) && !(body instanceof URLSearchParams)) {
       const params = new URLSearchParams();
-      for (const [key, value] of Object.entries(body)) {
-        params.append(key, value);
+      for (const [key, value] of Object.entries(body as Params)) {
+        if (value !== undefined && value !== null) {
+          params.append(key, String(value));
+        }
       }
       body = params;
       headers['Content-Type'] = headers['Content-Type'] || 'application/x-www-form-urlencoded';
@@ -282,20 +337,20 @@ class EcodeClient {
 
     const cookieString = this.jar.getCookieString();
     if (cookieString) {
-      headers['Cookie'] = cookieString;
+      headers.Cookie = cookieString;
     }
 
-    return { headers, body };
+    return { headers, body: body as BodyInit | undefined };
   }
 
-  _isSessionExpired(resData) {
+  _isSessionExpired(resData: unknown): boolean {
     // E9 会话过期通常通过 msgcode=-1 或特定字段标识
-    if (!resData || typeof resData !== 'object') return false;
+    if (!isRecord(resData)) return false;
     const code = resData.errorCode;
     return code === '002' && resData.msg === '登录信息超时';
   }
 
-  async _request(path, options = {}) {
+  async _request(path: string, options: RequestOptions = {}): Promise<Response> {
     const url = this._buildUrl(path, options.params);
     const { headers, body } = this._buildFetchOptions(options);
     const method = options.method || 'GET';
@@ -303,14 +358,13 @@ class EcodeClient {
     // 没有 cookie 时先登录
     if (!this.jar.getCookieString()) {
       await this.login();
-      headers['Cookie'] = this.jar.getCookieString();
+      headers.Cookie = this.jar.getCookieString();
     }
 
     this.logger.logRequest(method, url, headers);
     const t0 = Date.now();
 
     const res = await fetch(url, { method, headers, body });
-
     const duration = Date.now() - t0;
 
     // 检测会话失效：克隆 response 以便正文可二次读取
@@ -344,13 +398,11 @@ class EcodeClient {
     return res;
   }
 
-  async _get(path, params, headers) {
+  async _get(path: string, params?: Params, headers?: Record<string, string>): Promise<Response> {
     return this._request(path, { method: 'GET', params, headers });
   }
 
-  async _post(path, body, headers) {
+  async _post(path: string, body?: RequestBody, headers?: Record<string, string>): Promise<Response> {
     return this._request(path, { method: 'POST', body, headers });
   }
 }
-
-module.exports = { EcodeClient, CookieJar };

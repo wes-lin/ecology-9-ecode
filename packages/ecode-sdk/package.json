@@ -1,11 +1,14 @@
 {
   "name": "ecode-sdk",
   "version": "0.1.0",
-  "description": "JavaScript SDK for Ecology 9 ecode APIs",
-  "main": "src/index.js",
+  "description": "TypeScript SDK for Ecology 9 ecode APIs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
-    "test": "node --test test/**/*.test.js"
+    "build": "tsc -p tsconfig.json",
+    "test": "pnpm run build && node --test test/**/*.test.js"
   },
+  "license": "ISC",
   "dependencies": {
     "form-data": "^4.0.0"
   },

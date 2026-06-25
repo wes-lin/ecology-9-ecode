@@ -1,7 +1,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
-const { EcodeClient, CookieJar } = require('../src/client.js');
-const { EcodeLogger, NOOP_LOGGER } = require('../src/logger.js');
+const { EcodeClient, CookieJar } = require('../dist/client.js');
+const { EcodeLogger, NOOP_LOGGER } = require('../dist/logger.js');
 
 describe('ecode-sdk exports', () => {
   it('should export EcodeClient', () => {
@@ -74,7 +74,7 @@ describe('EcodeLogger', () => {
   it('should default level to info', () => {
     const logger = new EcodeLogger({ console: false });
     // info level index = 1
-    const { LEVELS } = require('../src/logger.js');
+    const { LEVELS } = require('../dist/logger.js');
     assert.strictEqual(logger.level, LEVELS.info);
   });
 

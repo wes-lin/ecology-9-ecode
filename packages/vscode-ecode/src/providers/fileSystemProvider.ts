@@ -1,4 +1,5 @@
-const vscode = require('vscode');
+import * as vscode from 'vscode';
+import type { EcodeNode, EcodeTreeDataProvider } from './treeDataProvider';
 
 /**
  * EcodeFileSystemProvider
@@ -7,22 +8,24 @@ const vscode = require('vscode');
  * 资源管理器等原生功能可用。只读：readFile / stat / readDirectory，
  * 不支持写入。
  */
-class EcodeFileSystemProvider {
+export class EcodeFileSystemProvider implements vscode.FileSystemProvider {
+  private tree: EcodeTreeDataProvider;
+  private _onDidChangeFile = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
+  readonly onDidChangeFile = this._onDidChangeFile.event;
+
   /**
-   * @param {object} treeDataProvider  EcodeTreeDataProvider 实例，提供 rootItems 和 _fileContents
+   * @param treeDataProvider EcodeTreeDataProvider 实例，提供 rootItems 和 _fileContents
    */
-  constructor(treeDataProvider) {
+  constructor(treeDataProvider: EcodeTreeDataProvider) {
     this.tree = treeDataProvider;
-    this._onDidChangeFile = new vscode.EventEmitter();
-    this.onDidChangeFile = this._onDidChangeFile.event;
   }
 
   /**
    * 根据路径判断文件/文件夹类型
-   * @param {vscode.Uri} uri  如 ecode:/foo/bar.js
-   * @returns {Promise<vscode.FileStat>}
+   * @param uri 如 ecode:/foo/bar.js
+   * @returns 文件状态
    */
-  async stat(uri) {
+  async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
     const filePath = uri.path;
 
     // 文件内容缓存中有记录 → 文件
@@ -42,10 +45,10 @@ class EcodeFileSystemProvider {
 
   /**
    * 读取文件内容
-   * @param {vscode.Uri} uri
-   * @returns {Promise<Uint8Array>}
+   * @param uri
+   * @returns 文件内容字节
    */
-  async readFile(uri) {
+  async readFile(uri: vscode.Uri): Promise<Uint8Array> {
     const content = this.tree._fileContents.get(uri.toString());
     if (content !== undefined) {
       return Buffer.from(content, 'utf8');
@@ -56,46 +59,46 @@ class EcodeFileSystemProvider {
 
   /**
    * 列出目录下的直接子项
-   * @param {vscode.Uri} uri
-   * @returns {Promise<[string, vscode.FileType][]>}
+   * @param uri
+   * @returns 子项名称和文件类型
    */
-  async readDirectory(uri) {
+  async readDirectory(uri: vscode.Uri): Promise<[string, vscode.FileType][]> {
     const dirPath = uri.path;
-    const entries = [];
+    const entries: [string, vscode.FileType][] = [];
     this._collectChildren(dirPath, entries);
     return entries;
   }
 
   // ── 只读 FS：以下方法不支持 ────────────────────────────────────────────────
 
-  watch() {
+  watch(): vscode.Disposable {
     return { dispose() {} };
   }
 
-  async writeFile() {
+  async writeFile(): Promise<void> {
     throw new Error('Read-only filesystem');
   }
 
-  async delete() {
+  async delete(): Promise<void> {
     throw new Error('Read-only filesystem');
   }
 
-  async rename() {
+  async rename(): Promise<void> {
     throw new Error('Read-only filesystem');
   }
 
-  async createDirectory() {
+  async createDirectory(): Promise<void> {
     throw new Error('Read-only filesystem');
   }
 
   // ── 内部工具 ───────────────────────────────────────────────────────────────
 
-  get rootItems() {
+  get rootItems(): EcodeNode[] {
     return this.tree.rootItems;
   }
 
   /** 从树节点中收集指定路径下的直接子项 */
-  _collectChildren(dirPath, result) {
+  _collectChildren(dirPath: string, result: [string, vscode.FileType][]): void {
     const nodesToScan = this.rootItems || [];
 
     if (dirPath && dirPath !== '/') {
@@ -113,7 +116,7 @@ class EcodeFileSystemProvider {
   }
 
   /** 递归查找路径对应的树节点 */
-  _findNodeByPath(targetPath, nodes) {
+  _findNodeByPath(targetPath: string, nodes: EcodeNode[]): EcodeNode | null {
     const normalized = targetPath.replace(/^\//, '');
     for (const node of nodes) {
       if ((node.remotePath || '') === normalized) return node;
@@ -126,9 +129,9 @@ class EcodeFileSystemProvider {
   }
 
   /** 判断路径是否为已知的文件夹节点 */
-  _isKnownDirectory(filePath) {
+  _isKnownDirectory(filePath: string): boolean {
     const normalized = filePath.replace(/^\//, '');
-    const check = (nodes) => {
+    const check = (nodes: EcodeNode[]): boolean => {
       for (const node of nodes) {
         if ((node.remotePath || '') === normalized && node.type === 'folder') return true;
         if (node.children?.length && check(node.children)) return true;
@@ -138,5 +141,3 @@ class EcodeFileSystemProvider {
     return check(this.rootItems || []);
   }
 }
-
-module.exports = { EcodeFileSystemProvider };
