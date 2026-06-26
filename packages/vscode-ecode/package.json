@@ -62,49 +62,49 @@
     "commands": [
       {
         "command": "ecode.refresh",
-        "title": "eCode: Refresh Explorer",
+        "title": "Refresh Explorer",
         "icon": "$(refresh)",
         "enablement": "!ecodeExplorer.busy"
       },
       {
         "command": "ecode.refreshFolder",
-        "title": "eCode: Refresh Folder",
+        "title": "Refresh Folder",
         "icon": "$(refresh)",
         "enablement": "!ecodeExplorer.busy"
       },
       {
         "command": "ecode.download",
-        "title": "eCode: Download",
+        "title": "Download",
         "icon": "$(cloud-download)",
         "enablement": "!ecodeExplorer.busy"
       },
       {
         "command": "ecode.openLocalFile",
-        "title": "eCode: Open Local File",
+        "title": "Open Local File",
         "icon": "$(go-to-file)",
         "enablement": "!ecodeExplorer.busy"
       },
       {
         "command": "ecode.compareWithRemote",
-        "title": "eCode: Compare with Remote",
+        "title": "Compare with Remote",
         "icon": "$(diff)",
         "enablement": "!ecodeExplorer.busy"
       },
       {
         "command": "ecode.deleteItem",
-        "title": "eCode: Delete",
+        "title": "Delete",
         "icon": "$(trash)",
         "enablement": "!ecodeExplorer.busy"
       },
       {
         "command": "ecode.openSettings",
-        "title": "eCode: Open Settings",
+        "title": "Open Settings",
         "icon": "$(gear)",
         "enablement": "!ecodeExplorer.busy"
       },
       {
         "command": "ecode.viewFile",
-        "title": "eCode: View Remote File",
+        "title": "View Remote File",
         "enablement": "!ecodeExplorer.busy"
       }
     ],
@@ -136,11 +136,6 @@
           "command": "ecode.deleteItem",
           "when": "view == ecodeExplorer && !ecodeExplorer.busy && viewItem =~ /deletable/",
           "group": "navigation"
-        },
-        {
-          "command": "ecode.openLocalFile",
-          "when": "view == ecodeExplorer && !ecodeExplorer.busy && viewItem =~ /file/",
-          "group": "inline"
         },
         {
           "command": "ecode.compareWithRemote",

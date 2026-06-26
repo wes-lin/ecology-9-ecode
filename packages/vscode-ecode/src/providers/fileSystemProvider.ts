@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import type { EcodeNode, EcodeTreeDataProvider } from './treeDataProvider';
+import type { EcodeNode } from './ecodeNode';
+import type { EcodeTreeDataProvider } from './treeDataProvider';
 
 /**
  * EcodeFileSystemProvider
