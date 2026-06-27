@@ -7,12 +7,19 @@ import { EcodeNode, type RemoteTreeItem } from './ecodeNode';
 import { EcodeFileSystemProvider } from './fileSystemProvider';
 
 const mkdir = promisify(fs.mkdir);
-const readFile = promisify(fs.readFile);
 const writeFile = promisify(fs.writeFile);
 
 type DownloadNodes = {
   folders: EcodeNode[];
   files: EcodeNode[];
+};
+
+type EcodeAppConfig = {
+  path: string;
+  appId: string;
+  appStatus: string;
+  appPreStateOrder: number;
+  preStateFiles: string[];
 };
 
 function getErrorMessage(error: unknown): string {
@@ -162,12 +169,14 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
         },
         async (progress) => {
           const nodes: DownloadNodes = { folders: [], files: [] };
-          progress.report({ message: 'Scanning remote eCode tree...' });
+          progress.report({ message: 'Scanning remote tree...' });
           await this._collectDownloadNodes(undefined, nodes);
 
           for (const folder of nodes.folders) {
             await this._ensureLocalFolderFromRemote(folder);
           }
+
+          await this._writeAppConfig(nodes.folders, nodes.files);
 
           if (nodes.files.length === 0) {
             progress.report({ increment: 100, message: 'No files found.' });
@@ -290,6 +299,28 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     vscode.window.showInformationMessage(`Cancel release is not implemented yet: ${element.label}`);
   }
 
+  setPreload(element: EcodeNode): void {
+    vscode.window.showInformationMessage(`Set preload is not implemented yet: ${element.label}`);
+  }
+
+  cancelPreload(element: EcodeNode): void {
+    vscode.window.showInformationMessage(`Cancel preload is not implemented yet: ${element.label}`);
+  }
+
+  async setPreloadOrder(element: EcodeNode): Promise<void> {
+    const value = await vscode.window.showInputBox({
+      title: 'Set Preload Order',
+      prompt: `App ID: ${element.appId} | Folder: ${element.label}`,
+      value: String(element.appPreStateOrder || 0),
+      validateInput: (input) => (/^\d+$/.test(input.trim()) ? undefined : 'Preload order must be a number.'),
+    });
+    if (value === undefined) return;
+
+    vscode.window.showInformationMessage(
+      `Set preload order is not implemented yet: ${element.label} (${element.appId}) = ${Number(value)}`
+    );
+  }
+
   async _setBusy(value: boolean): Promise<void> {
     this._busy = value;
     await vscode.commands.executeCommand('setContext', 'ecodeExplorer.busy', value);
@@ -304,11 +335,19 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     }
     if (element.type === 'file') {
       values.push('canOpenLocal', 'canViewRemote', 'canCompare');
+      if (element.deletable) {
+        if (element.state === 'pre-state') {
+          values.push('canCancelPreload');
+        } else {
+          values.push('canSetPreload');
+        }
+      }
     }
     if (element.deletable) {
       values.push('canDelete');
     }
     if (element.appId) {
+      values.push('canSetPreloadOrder');
       if (element.appStatus === 'released') {
         values.push('canCancelRelease');
       } else {
@@ -386,6 +425,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     if (element.type === 'folder') {
       nodes.folders.push(element);
       const children = await this._listRemoteChildren(element);
+      element.children = children;
       for (const child of children) {
         await this._collectDownloadNodes(child, nodes);
       }
@@ -399,6 +439,29 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     const targetPath = this._getLocalPath(element);
     await mkdir(targetPath, { recursive: true });
     return targetPath;
+  }
+
+  async _writeAppConfig(folders: EcodeNode[], files: EcodeNode[]): Promise<void> {
+    const apps = folders.filter((folder) => folder.appId).map((folder) => this._toAppConfig(folder, files));
+    const targetPath = path.join(this._getWorkspaceFolderPath(), 'ecode-apps.json');
+    await writeFile(targetPath, `${JSON.stringify(apps, null, 2)}\n`);
+  }
+
+  _toAppConfig(app: EcodeNode, files: EcodeNode[]): EcodeAppConfig {
+    return {
+      path: app.remotePath,
+      appId: app.appId,
+      appStatus: app.appStatus || '',
+      appPreStateOrder: app.appPreStateOrder || 0,
+      preStateFiles: this._collectPreStateFiles(app, files),
+    };
+  }
+
+  _collectPreStateFiles(app: EcodeNode, files: EcodeNode[]): string[] {
+    const appPath = app.remotePath.replace(/\/$/, '');
+    return files
+      .filter((file) => file.state === 'pre-state' && file.remotePath.startsWith(`${appPath}/`))
+      .map((file) => file.remotePath.slice(appPath.length + 1));
   }
 
   async _ensureLocalFileFromRemote(

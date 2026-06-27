@@ -116,6 +116,21 @@
         "command": "ecode.cancelRelease",
         "title": "Cancel Release",
         "enablement": "!ecodeExplorer.busy"
+      },
+      {
+        "command": "ecode.setPreload",
+        "title": "Set Preload",
+        "enablement": "!ecodeExplorer.busy"
+      },
+      {
+        "command": "ecode.cancelPreload",
+        "title": "Cancel Preload",
+        "enablement": "!ecodeExplorer.busy"
+      },
+      {
+        "command": "ecode.setPreloadOrder",
+        "title": "Set Preload Order",
+        "enablement": "!ecodeExplorer.busy"
       }
     ],
     "menus": {
@@ -165,6 +180,21 @@
         {
           "command": "ecode.cancelRelease",
           "when": "view == ecodeExplorer && viewItem =~ /canCancelRelease/",
+          "group": "navigation"
+        },
+        {
+          "command": "ecode.setPreload",
+          "when": "view == ecodeExplorer && viewItem =~ /canSetPreload/",
+          "group": "navigation"
+        },
+        {
+          "command": "ecode.cancelPreload",
+          "when": "view == ecodeExplorer && viewItem =~ /canCancelPreload/",
+          "group": "navigation"
+        },
+        {
+          "command": "ecode.setPreloadOrder",
+          "when": "view == ecodeExplorer && viewItem =~ /canSetPreloadOrder/",
           "group": "navigation"
         }
       ]

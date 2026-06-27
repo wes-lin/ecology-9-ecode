@@ -64,6 +64,24 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.setPreload', (item: EcodeNode) => {
+      treeDataProvider.setPreload(item);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.cancelPreload', (item: EcodeNode) => {
+      treeDataProvider.cancelPreload(item);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.setPreloadOrder', async (item: EcodeNode) => {
+      await treeDataProvider.setPreloadOrder(item);
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('ecode.openSettings', () => {
       vscode.commands.executeCommand('workbench.action.openSettings', 'ecode');
     })
