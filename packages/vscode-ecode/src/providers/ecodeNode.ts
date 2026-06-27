@@ -1,5 +1,4 @@
 export type EcodeNodeType = 'folder' | 'file' | 'info';
-export type EcodeFileSyncStatus = 'unknown' | 'clean' | 'modified' | 'untracked';
 
 export type EcodeNodeOptions = {
   id?: string;
@@ -36,7 +35,6 @@ export class EcodeNode {
   attribute: string;
   deletable: boolean;
   state: string;
-  syncStatus: EcodeFileSyncStatus;
   children?: EcodeNode[];
 
   constructor({
@@ -61,6 +59,5 @@ export class EcodeNode {
     this.attribute = attribute;
     this.deletable = deletable;
     this.state = state;
-    this.syncStatus = 'unknown';
   }
 }

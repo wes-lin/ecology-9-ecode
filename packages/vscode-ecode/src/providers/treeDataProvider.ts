@@ -3,11 +3,11 @@ import * as path from 'node:path';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
 import { EcodeClient, EcodeLogger } from 'ecode-sdk';
-import { EcodeFileSyncStatus, EcodeNode, type RemoteTreeItem } from './ecodeNode';
+import { EcodeNode, type RemoteTreeItem } from './ecodeNode';
 import { EcodeFileSystemProvider } from './fileSystemProvider';
-import { getEcodeFileStatus } from './fileStatus';
 
 const mkdir = promisify(fs.mkdir);
+const readFile = promisify(fs.readFile);
 const writeFile = promisify(fs.writeFile);
 
 type DownloadNodes = {
@@ -23,6 +23,10 @@ function toText(content: string | Buffer): string {
   return Buffer.isBuffer(content) ? content.toString('utf8') : String(content);
 }
 
+function normalizeNewlines(content: string): string {
+  return content.replace(/\r\n?/g, '\n');
+}
+
 export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>, vscode.Disposable {
   private _onDidChangeTreeData = new vscode.EventEmitter<EcodeNode | undefined | null | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -30,7 +34,6 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
   client: EcodeClient | null = null;
   rootItems: EcodeNode[] = [];
   private _busy = false;
-  private _decorationProvider?: { refresh(uri?: vscode.Uri): void };
 
   // 文件内容缓存：uri → 内容字符串
   _fileContents = new Map<string, string>();
@@ -81,16 +84,6 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
   dispose(): void {
     this._fsRegistration.dispose();
     this._onDidChangeTreeData.dispose();
-  }
-
-  setDecorationProvider(decorationProvider: { refresh(uri?: vscode.Uri): void }): void {
-    this._decorationProvider = decorationProvider;
-  }
-
-  getFileSyncStatus(uri: vscode.Uri): EcodeFileSyncStatus | undefined {
-    if (uri.scheme !== 'ecode') return undefined;
-    const remotePath = decodeURIComponent(uri.path).replace(/^\/+/, '');
-    return this._findNodeByRemotePath(remotePath, this.rootItems)?.syncStatus;
   }
 
   getTreeItem(element: EcodeNode): vscode.TreeItem {
@@ -233,28 +226,11 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     }
 
     try {
-      const result = await this._refreshFileSyncStatus(element);
-
-      if (result.status === 'untracked') {
-        await mkdir(path.dirname(result.localPath), { recursive: true });
-        await writeFile(result.localPath, result.remoteText);
-      }
-
-      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(result.localPath));
+      const targetPath = await this._ensureLocalFileFromRemote(element, { overwrite: false });
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(targetPath));
       await vscode.window.showTextDocument(doc, { preview: false });
     } catch (error) {
       vscode.window.showErrorMessage(`Open local file failed: ${getErrorMessage(error)}`);
-    }
-  }
-
-  async handleLocalFileSaved(document: vscode.TextDocument): Promise<void> {
-    const element = this._findNodeByLocalUri(document.uri);
-    if (!element) return;
-
-    try {
-      await this._refreshFileSyncStatus(element);
-    } catch (error) {
-      vscode.window.showErrorMessage(`Refresh file status failed: ${getErrorMessage(error)}`);
     }
   }
 
@@ -281,9 +257,14 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
         path: `/${this._getSafeRelativeRemotePath(element.remotePath).replace(/\\/g, '/')}`,
         query: `compare=${Date.now()}`,
       });
-      const localUri = vscode.Uri.file(targetPath);
+      const localUri = vscode.Uri.from({
+        scheme: 'ecode',
+        path: `/${this._getSafeRelativeRemotePath(`${element.remotePath}.local`).replace(/\\/g, '/')}`,
+        query: `compare=${Date.now()}`,
+      });
 
-      this._fileContents.set(remoteUri.toString(), toText(remoteContent));
+      this._fileContents.set(remoteUri.toString(), normalizeNewlines(toText(remoteContent)));
+      this._fileContents.set(localUri.toString(), normalizeNewlines(await readFile(targetPath, 'utf8')));
       await vscode.commands.executeCommand('vscode.diff', remoteUri, localUri, `${element.label}: Remote ↔ Local`);
     } catch (error) {
       vscode.window.showErrorMessage(`Compare failed: ${getErrorMessage(error)}`);
@@ -319,20 +300,6 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
 
   _getRemoteUri(element: EcodeNode): vscode.Uri {
     return vscode.Uri.parse(`ecode:/${element.remotePath}`);
-  }
-
-  async _refreshFileSyncStatus(element: EcodeNode): Promise<Awaited<ReturnType<typeof getEcodeFileStatus>>> {
-    const client = this._getClient();
-    const targetPath = this._getLocalPath(element);
-    const result = await getEcodeFileStatus(client, targetPath, element.id ?? '');
-    const remoteUri = this._getRemoteUri(element);
-
-    this._fileContents.set(remoteUri.toString(), result.remoteText);
-    element.syncStatus = result.status;
-    this._onDidChangeTreeData.fire(element);
-    this._decorationProvider?.refresh(remoteUri);
-
-    return result;
   }
 
   _findNodeByLocalUri(uri: vscode.Uri): EcodeNode | undefined {
@@ -425,7 +392,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     await mkdir(path.dirname(targetPath), { recursive: true });
     const client = this._getClient();
     const content = await client.viewFile(element.id ?? '');
-    await writeFile(targetPath, toText(content));
+    await writeFile(targetPath, normalizeNewlines(toText(content)));
     return targetPath;
   }
 
