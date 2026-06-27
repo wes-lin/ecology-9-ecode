@@ -52,6 +52,18 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.release', (item: EcodeNode) => {
+      treeDataProvider.release(item);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.cancelRelease', (item: EcodeNode) => {
+      treeDataProvider.cancelRelease(item);
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('ecode.openSettings', () => {
       vscode.commands.executeCommand('workbench.action.openSettings', 'ecode');
     })

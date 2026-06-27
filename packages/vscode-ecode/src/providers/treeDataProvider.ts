@@ -96,8 +96,8 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
 
     if (!isInfo) {
       treeItem.iconPath = element.type === 'folder' ? new vscode.ThemeIcon('folder') : new vscode.ThemeIcon('file');
-      treeItem.resourceUri = vscode.Uri.parse(`ecode:/${element.remotePath}`);
-      treeItem.contextValue = element.deletable ? `${element.type}-deletable` : element.type;
+      treeItem.resourceUri = this._getRemoteUri(element);
+      treeItem.contextValue = this._getContextValue(element);
       treeItem.tooltip = element.remotePath;
       if (element.state === 'pre-state') {
         treeItem.description = 'P';
@@ -125,11 +125,9 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       return [];
     }
 
-    const client = this._getClient();
     if (!element) {
       try {
-        const tree = await client.listTree();
-        this.rootItems = this._mapTree(tree, '');
+        this.rootItems = await this._listRemoteChildren();
         if (this.rootItems.length === 0) {
           return [new EcodeNode({ label: '(empty)', type: 'info' })];
         }
@@ -140,11 +138,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     }
 
     if (element.hasChild) {
-      const tree =
-        element.treeType === 'folder'
-          ? await client.listTree(element.id ?? '', '')
-          : await client.listTree('', element.id ?? '');
-      const children = this._mapTree(tree, element.remotePath);
+      const children = await this._listRemoteChildren(element);
       element.children = children;
       return children;
     }
@@ -209,7 +203,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     try {
       const client = this._getClient();
       const content = await client.viewFile(element.id ?? '');
-      const uri = vscode.Uri.parse(`ecode:/${element.remotePath}`);
+      const uri = this._getRemoteUri(element);
       this._fileContents.set(uri.toString(), toText(content));
 
       const doc = await vscode.workspace.openTextDocument(uri);
@@ -252,19 +246,15 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       const targetPath = await this._ensureLocalFileFromRemote(element, { overwrite: false });
       const client = this._getClient();
       const remoteContent = await client.viewFile(element.id ?? '');
+      const safePath = `/${this._getSafeRelativeRemotePath(element.remotePath).replace(/\\/g, '/')}`;
       const remoteUri = vscode.Uri.from({
         scheme: 'ecode',
-        path: `/${this._getSafeRelativeRemotePath(element.remotePath).replace(/\\/g, '/')}`,
-        query: `compare=${Date.now()}`,
+        path: safePath,
+        query: `side=remote&compare=${Date.now()}`,
       });
-      const localUri = vscode.Uri.from({
-        scheme: 'ecode',
-        path: `/${this._getSafeRelativeRemotePath(`${element.remotePath}.local`).replace(/\\/g, '/')}`,
-        query: `compare=${Date.now()}`,
-      });
+      const localUri = vscode.Uri.file(targetPath);
 
       this._fileContents.set(remoteUri.toString(), normalizeNewlines(toText(remoteContent)));
-      this._fileContents.set(localUri.toString(), normalizeNewlines(await readFile(targetPath, 'utf8')));
       await vscode.commands.executeCommand('vscode.diff', remoteUri, localUri, `${element.label}: Remote ↔ Local`);
     } catch (error) {
       vscode.window.showErrorMessage(`Compare failed: ${getErrorMessage(error)}`);
@@ -292,10 +282,41 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     vscode.window.showInformationMessage('Delete is not implemented yet.');
   }
 
+  release(element: EcodeNode): void {
+    vscode.window.showInformationMessage(`Release is not implemented yet: ${element.label}`);
+  }
+
+  cancelRelease(element: EcodeNode): void {
+    vscode.window.showInformationMessage(`Cancel release is not implemented yet: ${element.label}`);
+  }
+
   async _setBusy(value: boolean): Promise<void> {
     this._busy = value;
     await vscode.commands.executeCommand('setContext', 'ecodeExplorer.busy', value);
     this._onDidChangeTreeData.fire();
+  }
+
+  _getContextValue(element: EcodeNode): string {
+    const values: string[] = [];
+
+    if (element.type === 'folder') {
+      values.push('canRefreshFolder');
+    }
+    if (element.type === 'file') {
+      values.push('canOpenLocal', 'canViewRemote', 'canCompare');
+    }
+    if (element.deletable) {
+      values.push('canDelete');
+    }
+    if (element.appId) {
+      if (element.appStatus === 'released') {
+        values.push('canCancelRelease');
+      } else {
+        values.push('canRelease');
+      }
+    }
+
+    return values.join(' ');
   }
 
   _getRemoteUri(element: EcodeNode): vscode.Uri {
@@ -481,6 +502,8 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
         attribute: item.attribute || '',
         deletable: !['system', 'jar', 'config', 'resource', 'non-code'].includes(item.attribute || ''),
         state: item.state || '',
+        appStatus: item.status || '',
+        appPreStateOrder: item.preStateOrder || 0,
       });
     });
   }

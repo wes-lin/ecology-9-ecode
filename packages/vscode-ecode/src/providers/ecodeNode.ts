@@ -11,6 +11,8 @@ export type EcodeNodeOptions = {
   attribute?: string;
   deletable?: boolean;
   state?: string;
+  appStatus?: string;
+  appPreStateOrder?: number;
 };
 
 export type RemoteTreeItem = {
@@ -22,42 +24,28 @@ export type RemoteTreeItem = {
   initialAppId?: string;
   attribute?: string;
   state?: string;
+  status?: string;
+  preStateOrder?: number;
 };
 
 export class EcodeNode {
   id?: string;
   label: string;
   type: EcodeNodeType;
-  treeType: string;
-  remotePath: string;
-  hasChild: boolean;
-  appId: string;
-  attribute: string;
-  deletable: boolean;
-  state: string;
+  treeType = '';
+  remotePath = '';
+  hasChild = false;
+  appId = '';
+  attribute = '';
+  deletable = false;
+  state = '';
+  appStatus?: string;
+  appPreStateOrder?: number;
   children?: EcodeNode[];
 
-  constructor({
-    id,
-    label,
-    type,
-    treeType = '',
-    remotePath = '',
-    hasChild = false,
-    appId = '',
-    attribute = '',
-    deletable = false,
-    state = '',
-  }: EcodeNodeOptions) {
-    this.id = id;
-    this.label = label;
-    this.type = type;
-    this.treeType = treeType;
-    this.remotePath = remotePath;
-    this.hasChild = hasChild;
-    this.appId = appId;
-    this.attribute = attribute;
-    this.deletable = deletable;
-    this.state = state;
+  constructor(options: EcodeNodeOptions) {
+    this.label = options.label;
+    this.type = options.type;
+    Object.assign(this, options);
   }
 }

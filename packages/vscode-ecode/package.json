@@ -62,13 +62,13 @@
     "commands": [
       {
         "command": "ecode.refresh",
-        "title": "Refresh Explorer",
+        "title": "Refresh",
         "icon": "$(refresh)",
         "enablement": "!ecodeExplorer.busy"
       },
       {
         "command": "ecode.refreshFolder",
-        "title": "Refresh Folder",
+        "title": "Refresh",
         "icon": "$(refresh)",
         "enablement": "!ecodeExplorer.busy"
       },
@@ -106,6 +106,16 @@
         "command": "ecode.viewFile",
         "title": "View Remote File",
         "enablement": "!ecodeExplorer.busy"
+      },
+      {
+        "command": "ecode.release",
+        "title": "Release",
+        "enablement": "!ecodeExplorer.busy"
+      },
+      {
+        "command": "ecode.cancelRelease",
+        "title": "Cancel Release",
+        "enablement": "!ecodeExplorer.busy"
       }
     ],
     "menus": {
@@ -129,22 +139,32 @@
       "view/item/context": [
         {
           "command": "ecode.refreshFolder",
-          "when": "view == ecodeExplorer && !ecodeExplorer.busy && viewItem =~ /folder/",
+          "when": "view == ecodeExplorer && viewItem =~ /canRefreshFolder/",
           "group": "navigation"
         },
         {
           "command": "ecode.deleteItem",
-          "when": "view == ecodeExplorer && !ecodeExplorer.busy && viewItem =~ /deletable/",
+          "when": "view == ecodeExplorer && viewItem =~ /canDelete/",
           "group": "navigation"
         },
         {
           "command": "ecode.compareWithRemote",
-          "when": "view == ecodeExplorer && !ecodeExplorer.busy && viewItem =~ /file/",
+          "when": "view == ecodeExplorer && viewItem =~ /canCompare/",
           "group": "navigation"
         },
         {
           "command": "ecode.viewFile",
-          "when": "view == ecodeExplorer && !ecodeExplorer.busy && viewItem =~ /file/",
+          "when": "view == ecodeExplorer && viewItem =~ /canViewRemote/",
+          "group": "navigation"
+        },
+        {
+          "command": "ecode.release",
+          "when": "view == ecodeExplorer && viewItem =~ /canRelease/",
+          "group": "navigation"
+        },
+        {
+          "command": "ecode.cancelRelease",
+          "when": "view == ecodeExplorer && viewItem =~ /canCancelRelease/",
           "group": "navigation"
         }
       ]
@@ -152,6 +172,7 @@
   },
   "scripts": {
     "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
     "build:production": "node esbuild.js --production",
     "vscode:prepublish": "pnpm run build:production",
     "package": "pnpm run build:production && node scripts/ensure-releases-dir.js && vsce package --no-dependencies --out releases",
