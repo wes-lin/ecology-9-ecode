@@ -30,7 +30,7 @@ export class EcodeFileSystemProvider implements vscode.FileSystemProvider {
     const filePath = uri.path;
 
     // 文件内容缓存中有记录 → 文件
-    if (this.tree._fileContents.has(uri.toString())) {
+    if (this.tree._fileContents.has(uri.path)) {
       return { type: vscode.FileType.File, ctime: Date.now(), mtime: Date.now(), size: -1 };
     }
 
@@ -50,9 +50,9 @@ export class EcodeFileSystemProvider implements vscode.FileSystemProvider {
    * @returns 文件内容字节
    */
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
-    const content = this.tree._fileContents.get(uri.toString());
+    const content = this.tree._fileContents.get(uri.path);
     if (content !== undefined) {
-      return Buffer.from(content, 'utf8');
+      return content;
     }
     // 未缓存时返回空，避免报错
     return Buffer.from('', 'utf8');

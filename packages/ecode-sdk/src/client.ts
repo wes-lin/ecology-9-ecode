@@ -281,7 +281,8 @@ export class EcodeClient {
       treeData.system || [],
       treeData.typeList || [],
       treeData.childFolder || [],
-      treeData.childFile || []
+      treeData.childFile || [],
+      treeData.resources || []
     );
   }
 
@@ -289,6 +290,15 @@ export class EcodeClient {
     const res = await this._get('/api/cloudstore/ecode/one', { id });
     const resData = (await res.json()) as { data?: { content?: string | Buffer } };
     return resData.data?.content ?? '';
+  }
+
+  async viewResource(route: string): Promise<Buffer> {
+    const res = await this._get(route);
+    if (!res.ok) {
+      throw new Error(`View resource failed: HTTP ${res.status}, path: ${route}`);
+    }
+    const arrayBuffer = await res.arrayBuffer();
+    return Buffer.from(arrayBuffer);
   }
 
   async uploadFile(localPath: string, remotePath: string): Promise<Response> {

@@ -20,18 +20,23 @@ type EcodeAppConfig = {
   appStatus: string;
   appPreStateOrder: number;
   preStateFiles: string[];
+  resources: string[];
 };
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function toText(content: string | Buffer): string {
-  return Buffer.isBuffer(content) ? content.toString('utf8') : String(content);
+function toBytes(content: string | Buffer): Uint8Array {
+  return Buffer.isBuffer(content) ? content : Buffer.from(String(content), 'utf8');
 }
 
 function normalizeNewlines(content: string): string {
   return content.replace(/\r\n?/g, '\n');
+}
+
+function normalizeContentForWrite(content: string | Buffer): string | Buffer {
+  return Buffer.isBuffer(content) ? content : normalizeNewlines(content);
 }
 
 export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>, vscode.Disposable {
@@ -42,8 +47,8 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
   rootItems: EcodeNode[] = [];
   private _busy = false;
 
-  // 文件内容缓存：uri → 内容字符串
-  _fileContents = new Map<string, string>();
+  // 文件内容缓存：uri → 内容字节
+  _fileContents = new Map<string, Uint8Array>();
   private _fsRegistration: vscode.Disposable;
 
   constructor(cookieFile: string) {
@@ -161,7 +166,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
 
     await this._setBusy(true);
     try {
-      await vscode.window.withProgress(
+      const failed = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
           title: 'Downloading eCode source',
@@ -180,22 +185,34 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
 
           if (nodes.files.length === 0) {
             progress.report({ increment: 100, message: 'No files found.' });
-            return;
+            return 0;
           }
 
           const increment = 100 / nodes.files.length;
           let completed = 0;
+          let failed = 0;
           for (const file of nodes.files) {
-            await this._ensureLocalFileFromRemote(file, { overwrite: true });
+            try {
+              await this._ensureLocalFileFromRemote(file, { overwrite: true });
+            } catch (error) {
+              failed += 1;
+              console.warn(`Download failed for ${file.remotePath}: ${getErrorMessage(error)}`);
+            }
             completed += 1;
             progress.report({
               increment,
-              message: `Downloaded ${completed}/${nodes.files.length}: ${file.remotePath}`,
+              message: `Downloaded ${completed - failed}/${nodes.files.length}, failed ${failed}: ${file.remotePath}`,
             });
           }
+
+          return failed;
         }
       );
-      vscode.window.showInformationMessage('eCode source download completed.');
+      if (failed > 0) {
+        vscode.window.showWarningMessage(`eCode source download completed with ${failed} failed file(s).`);
+      } else {
+        vscode.window.showInformationMessage('eCode source download completed.');
+      }
     } catch (error) {
       vscode.window.showErrorMessage(`Download failed: ${getErrorMessage(error)}`);
     } finally {
@@ -210,13 +227,11 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     }
 
     try {
-      const client = this._getClient();
-      const content = await client.viewFile(element.id ?? '');
+      const content = await this._readRemoteContent(element);
       const uri = this._getRemoteUri(element);
-      this._fileContents.set(uri.toString(), toText(content));
+      this._fileContents.set(uri.path, toBytes(content));
 
-      const doc = await vscode.workspace.openTextDocument(uri);
-      await vscode.window.showTextDocument(doc, { preview: false });
+      await vscode.commands.executeCommand('vscode.open', uri, { preview: false });
     } catch (error) {
       vscode.window.showErrorMessage(`View file failed: ${getErrorMessage(error)}`);
     }
@@ -230,8 +245,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
 
     try {
       const targetPath = await this._ensureLocalFileFromRemote(element, { overwrite: false });
-      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(targetPath));
-      await vscode.window.showTextDocument(doc, { preview: false });
+      await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(targetPath), { preview: false });
     } catch (error) {
       vscode.window.showErrorMessage(`Open local file failed: ${getErrorMessage(error)}`);
     }
@@ -242,7 +256,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     if (!element) return;
 
     const remoteUri = this._getRemoteUri(element);
-    this._fileContents.delete(remoteUri.toString());
+    this._fileContents.delete(remoteUri.path);
   }
 
   async compareWithRemote(element: EcodeNode): Promise<void> {
@@ -253,8 +267,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
 
     try {
       const targetPath = await this._ensureLocalFileFromRemote(element, { overwrite: false });
-      const client = this._getClient();
-      const remoteContent = await client.viewFile(element.id ?? '');
+      const remoteContent = await this._readRemoteContent(element);
       const safePath = `/${this._getSafeRelativeRemotePath(element.remotePath).replace(/\\/g, '/')}`;
       const remoteUri = vscode.Uri.from({
         scheme: 'ecode',
@@ -263,7 +276,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       });
       const localUri = vscode.Uri.file(targetPath);
 
-      this._fileContents.set(remoteUri.toString(), normalizeNewlines(toText(remoteContent)));
+      this._fileContents.set(remoteUri.path, toBytes(remoteContent));
       await vscode.commands.executeCommand('vscode.diff', remoteUri, localUri, `${element.label}: Remote ↔ Local`);
     } catch (error) {
       vscode.window.showErrorMessage(`Compare failed: ${getErrorMessage(error)}`);
@@ -454,6 +467,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       appStatus: app.appStatus || '',
       appPreStateOrder: app.appPreStateOrder || 0,
       preStateFiles: this._collectPreStateFiles(app, files),
+      resources: this._collectResources(app, files),
     };
   }
 
@@ -461,6 +475,13 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     const appPath = app.remotePath.replace(/\/$/, '');
     return files
       .filter((file) => file.state === 'pre-state' && file.remotePath.startsWith(`${appPath}/`))
+      .map((file) => file.remotePath.slice(appPath.length + 1));
+  }
+
+  _collectResources(app: EcodeNode, files: EcodeNode[]): string[] {
+    const appPath = app.remotePath.replace(/\/$/, '');
+    return files
+      .filter((file) => file.treeType === 'resource' && file.remotePath.startsWith(`${appPath}/`))
       .map((file) => file.remotePath.slice(appPath.length + 1));
   }
 
@@ -474,10 +495,17 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     }
 
     await mkdir(path.dirname(targetPath), { recursive: true });
-    const client = this._getClient();
-    const content = await client.viewFile(element.id ?? '');
-    await writeFile(targetPath, normalizeNewlines(toText(content)));
+    const content = await this._readRemoteContent(element);
+    await writeFile(targetPath, normalizeContentForWrite(content));
     return targetPath;
+  }
+
+  async _readRemoteContent(element: EcodeNode): Promise<string | Buffer> {
+    const client = this._getClient();
+    if (element.treeType === 'resource') {
+      return client.viewResource(element.route);
+    }
+    return client.viewFile(element.id ?? '');
   }
 
   _getWorkspaceFolderPath(): string {
@@ -560,13 +588,15 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
             : 'file',
         treeType: item.treeType || '',
         remotePath,
+        route: item.route || '',
         hasChild: item.hasChild || false,
-        appId: item.initialAppId || '',
+        appId: item.initialAppId ? item.id : '',
         attribute: item.attribute || '',
         deletable: !['system', 'jar', 'config', 'resource', 'non-code'].includes(item.attribute || ''),
         state: item.state || '',
         appStatus: item.status || '',
         appPreStateOrder: item.preStateOrder || 0,
+        fileExtension: item.fileExtension || '',
       });
     });
   }

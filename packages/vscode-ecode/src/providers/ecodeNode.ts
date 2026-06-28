@@ -6,6 +6,7 @@ export type EcodeNodeOptions = {
   type: EcodeNodeType;
   treeType?: string;
   remotePath?: string;
+  route?: string;
   hasChild?: boolean;
   appId?: string;
   attribute?: string;
@@ -13,6 +14,7 @@ export type EcodeNodeOptions = {
   state?: string;
   appStatus?: string;
   appPreStateOrder?: number;
+  fileExtension?: string;
 };
 
 export type RemoteTreeItem = {
@@ -26,6 +28,8 @@ export type RemoteTreeItem = {
   state?: string;
   status?: string;
   preStateOrder?: number;
+  fileExtension?: string;
+  route?: string;
 };
 
 export class EcodeNode {
@@ -34,6 +38,7 @@ export class EcodeNode {
   type: EcodeNodeType;
   treeType = '';
   remotePath = '';
+  route = '';
   hasChild = false;
   appId = '';
   attribute = '';
@@ -41,6 +46,7 @@ export class EcodeNode {
   state = '';
   appStatus?: string;
   appPreStateOrder?: number;
+  fileExtension?: string;
   children?: EcodeNode[];
 
   constructor(options: EcodeNodeOptions) {
