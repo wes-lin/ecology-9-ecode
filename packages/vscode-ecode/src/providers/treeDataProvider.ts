@@ -21,6 +21,7 @@ type EcodeAppConfig = {
   appPreStateOrder: number;
   preStateFiles: string[];
   resources: string[];
+  configs: string[];
 };
 
 function getErrorMessage(error: unknown): string {
@@ -455,7 +456,9 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
   }
 
   async _writeAppConfig(folders: EcodeNode[], files: EcodeNode[]): Promise<void> {
-    const apps = folders.filter((folder) => folder.appId).map((folder) => this._toAppConfig(folder, files));
+    const apps = folders
+      .filter((folder) => folder.appId || folder.attribute === 'system')
+      .map((folder) => this._toAppConfig(folder, files));
     const targetPath = path.join(this._getWorkspaceFolderPath(), 'ecode-apps.json');
     await writeFile(targetPath, `${JSON.stringify(apps, null, 2)}\n`);
   }
@@ -468,13 +471,17 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       appPreStateOrder: app.appPreStateOrder || 0,
       preStateFiles: this._collectPreStateFiles(app, files),
       resources: this._collectResources(app, files),
+      configs: this._collectConfigs(app, files),
     };
   }
 
   _collectPreStateFiles(app: EcodeNode, files: EcodeNode[]): string[] {
     const appPath = app.remotePath.replace(/\/$/, '');
     return files
-      .filter((file) => file.state === 'pre-state' && file.remotePath.startsWith(`${appPath}/`))
+      .filter(
+        (file) =>
+          (file.state === 'pre-state' || file.attribute === 'system') && file.remotePath.startsWith(`${appPath}/`)
+      )
       .map((file) => file.remotePath.slice(appPath.length + 1));
   }
 
@@ -482,6 +489,13 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     const appPath = app.remotePath.replace(/\/$/, '');
     return files
       .filter((file) => file.treeType === 'resource' && file.remotePath.startsWith(`${appPath}/`))
+      .map((file) => file.remotePath.slice(appPath.length + 1));
+  }
+
+  _collectConfigs(app: EcodeNode, files: EcodeNode[]): string[] {
+    const appPath = app.remotePath.replace(/\/$/, '');
+    return files
+      .filter((file) => ['non-code', 'config'].includes(file.attribute) && file.remotePath.startsWith(`${appPath}/`))
       .map((file) => file.remotePath.slice(appPath.length + 1));
   }
 
@@ -590,11 +604,11 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
         remotePath,
         route: item.route || '',
         hasChild: item.hasChild || false,
-        appId: item.initialAppId ? item.id : '',
+        appId: item.initialAppId || item.attribute === 'system' ? item.id : '',
         attribute: item.attribute || '',
         deletable: !['system', 'jar', 'config', 'resource', 'non-code'].includes(item.attribute || ''),
         state: item.state || '',
-        appStatus: item.status || '',
+        appStatus: item.attribute === 'system' ? 'released' : item.status || '',
         appPreStateOrder: item.preStateOrder || 0,
         fileExtension: item.fileExtension || '',
       });
