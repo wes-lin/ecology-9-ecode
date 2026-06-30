@@ -2,8 +2,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
-import { EcodeClient, EcodeLogger } from 'ecode-sdk';
-import { EcodeNode, type RemoteTreeItem } from './ecodeNode';
+import { EcodeClient, EcodeLogger, type RemoteTreeItem } from 'ecode-sdk';
+import { EcodeNode } from './ecodeNode';
 import { EcodeFileSystemProvider } from './fileSystemProvider';
 import { normalizeNewlines, normalizeRemotePath } from '../utils/pathUtils';
 import { hashContent, SnapshotStore, type SnapshotEntry } from './snapshotStore';
@@ -124,7 +124,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     );
 
     if (!isInfo) {
-      treeItem.iconPath = element.type === 'folder' ? new vscode.ThemeIcon('folder') : new vscode.ThemeIcon('file');
+      treeItem.iconPath = this._getIcon(element);
       treeItem.resourceUri = this._getRemoteUri(element);
       treeItem.contextValue = this._getContextValue(element);
       treeItem.tooltip = element.remotePath;
@@ -137,6 +137,22 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     }
 
     return treeItem;
+  }
+
+  private _getIcon(element: EcodeNode): vscode.ThemeIcon {
+    if (element.loading) return new vscode.ThemeIcon('sync~spin');
+    if (element.type === 'file') return new vscode.ThemeIcon('file');
+    if (element.businessType === 'project') return new vscode.ThemeIcon('project');
+    if (element.businessType === 'type') return new vscode.ThemeIcon('symbol-folder');
+    if (element.appId) {
+      if (element.appStatus === 'released') {
+        return new vscode.ThemeIcon('vm-active');
+      } else {
+        return new vscode.ThemeIcon('vm-outline');
+      }
+    }
+
+    return new vscode.ThemeIcon('folder');
   }
 
   async getChildren(element?: EcodeNode): Promise<EcodeNode[]> {
@@ -335,20 +351,52 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     vscode.window.showInformationMessage('Delete is not implemented yet.');
   }
 
-  release(element: EcodeNode): void {
-    vscode.window.showInformationMessage(`Release is not implemented yet: ${element.label}`);
+  async release(element: EcodeNode): Promise<void> {
+    const client = this._getClient();
+    await this._withNodeLoading(element, async () => {
+      try {
+        await client.release(element.appId);
+        await this._updateAppStatus(element, { appStatus: 'released' });
+      } catch (e) {
+        vscode.window.showErrorMessage(`${element.label} release fail, error:${e}`);
+      }
+    });
   }
 
-  cancelRelease(element: EcodeNode): void {
-    vscode.window.showInformationMessage(`Cancel release is not implemented yet: ${element.label}`);
+  async cancelRelease(element: EcodeNode): Promise<void> {
+    const client = this._getClient();
+    await this._withNodeLoading(element, async () => {
+      try {
+        await client.deleteReleaseFile(element.appId);
+        await this._updateAppStatus(element, { appStatus: '' });
+      } catch (e) {
+        vscode.window.showErrorMessage(`${element.label} cancel release fail, error:${e}`);
+      }
+    });
   }
 
-  setPreload(element: EcodeNode): void {
-    vscode.window.showInformationMessage(`Set preload is not implemented yet: ${element.label}`);
+  async setPreload(element: EcodeNode): Promise<void> {
+    const client = this._getClient();
+    await this._withNodeLoading(element, async () => {
+      try {
+        await client.markFile(element.id as string, 'pre-state');
+        await this._updatePreloadState(element, true);
+      } catch (e) {
+        vscode.window.showErrorMessage(`${element.label} set preload fail, error:${e}`);
+      }
+    });
   }
 
-  cancelPreload(element: EcodeNode): void {
-    vscode.window.showInformationMessage(`Cancel preload is not implemented yet: ${element.label}`);
+  async cancelPreload(element: EcodeNode): Promise<void> {
+    const client = this._getClient();
+    await this._withNodeLoading(element, async () => {
+      try {
+        await client.markFile(element.id as string);
+        await this._updatePreloadState(element, false);
+      } catch (e) {
+        vscode.window.showErrorMessage(`${element.label} cancel preload  fail, error:${e}`);
+      }
+    });
   }
 
   async setPreloadOrder(element: EcodeNode): Promise<void> {
@@ -360,9 +408,27 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     });
     if (value === undefined) return;
 
-    vscode.window.showInformationMessage(
-      `Set preload order is not implemented yet: ${element.label} (${element.appId}) = ${Number(value)}`
-    );
+    const client = this._getClient();
+    await this._withNodeLoading(element, async () => {
+      try {
+        const appPreStateOrder = Number.parseInt(value.trim(), 10);
+        await client.setPreStateOrder(element.appId, appPreStateOrder);
+        await this._updateAppStatus(element, { appPreStateOrder });
+      } catch (e) {
+        vscode.window.showErrorMessage(`${element.label} Set preload order  fail, error:${e}`);
+      }
+    });
+  }
+
+  async _withNodeLoading(element: EcodeNode, operation: () => Promise<void>): Promise<void> {
+    element.loading = true;
+    this._onDidChangeTreeData.fire(element);
+    try {
+      await operation();
+    } finally {
+      element.loading = false;
+      this._onDidChangeTreeData.fire(element);
+    }
   }
 
   async _setBusy(value: boolean): Promise<void> {
@@ -383,7 +449,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
         if (element.state === 'pre-state') {
           values.push('canCancelPreload');
         } else {
-          values.push('canSetPreload');
+          values.push('canSetScriptPreload');
         }
       }
     }
@@ -432,15 +498,38 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     return undefined;
   }
 
-  _findNodeByRemotePath(remotePath: string, nodes: EcodeNode[]): EcodeNode | undefined {
-    for (const node of nodes) {
-      if (node.remotePath === remotePath) return node;
-      if (node.children) {
-        const child = this._findNodeByRemotePath(remotePath, node.children);
-        if (child) return child;
-      }
-    }
-    return undefined;
+  async _updateAppStatus(
+    app: EcodeNode,
+    updates: Pick<Partial<EcodeAppConfig>, 'appStatus' | 'appPreStateOrder'>
+  ): Promise<void> {
+    if (updates.appStatus !== undefined) app.appStatus = updates.appStatus;
+    if (updates.appPreStateOrder !== undefined) app.appPreStateOrder = updates.appPreStateOrder;
+    this._onDidChangeTreeData.fire(app);
+
+    const targetPath = path.join(this._getWorkspaceFolderPath(), '.ecode', 'ecode-apps.json');
+    const apps = this._readAppConfig(targetPath).map((current) =>
+      current.appId === app.appId ? { ...current, ...updates } : current
+    );
+    await writeFile(targetPath, `${JSON.stringify(apps, null, 2)}\n`);
+  }
+
+  async _updatePreloadState(element: EcodeNode, enabled: boolean): Promise<void> {
+    element.state = enabled ? 'pre-state' : '';
+    this._onDidChangeTreeData.fire(element);
+
+    const parent = element.parent;
+    if (!parent) return;
+
+    const targetPath = path.join(this._getWorkspaceFolderPath(), '.ecode', 'ecode-apps.json');
+    const relativePath = element.remotePath.slice(parent.remotePath.length + 1);
+    const apps = this._readAppConfig(targetPath).map((current) => {
+      if (current.path !== parent.remotePath) return current;
+      const preStateFiles = enabled
+        ? [...current.preStateFiles, relativePath]
+        : current.preStateFiles.filter((file) => file !== relativePath);
+      return { ...current, preStateFiles: [...new Set(preStateFiles)] };
+    });
+    await writeFile(targetPath, `${JSON.stringify(apps, null, 2)}\n`);
   }
 
   async _listRemoteChildren(element?: EcodeNode): Promise<EcodeNode[]> {
@@ -454,12 +543,13 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       element.treeType === 'folder'
         ? await client.listTree(element.id ?? '', '')
         : await client.listTree('', element.id ?? '');
-    return this._mapTree(tree, element.remotePath);
+    return this._mapTree(tree, element.remotePath, element);
   }
 
   async _collectDownloadNodes(element: EcodeNode | undefined, nodes: DownloadNodes): Promise<void> {
     if (!element) {
       const roots = await this._listRemoteChildren(undefined);
+      this.rootItems = roots;
       for (const root of roots) {
         await this._collectDownloadNodes(root, nodes);
       }
@@ -491,6 +581,17 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       .map((folder) => this._toAppConfig(folder, files));
     const targetPath = path.join(this._getWorkspaceFolderPath(), '.ecode', 'ecode-apps.json');
     await writeFile(targetPath, `${JSON.stringify(apps, null, 2)}\n`);
+  }
+
+  _readAppConfig(targetPath: string): EcodeAppConfig[] {
+    if (!fs.existsSync(targetPath)) return [];
+
+    try {
+      const apps = JSON.parse(fs.readFileSync(targetPath, 'utf8')) as EcodeAppConfig[];
+      return Array.isArray(apps) ? apps : [];
+    } catch {
+      return [];
+    }
   }
 
   _toAppConfig(app: EcodeNode, files: EcodeNode[]): EcodeAppConfig {
@@ -690,10 +791,10 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     return this.client;
   }
 
-  _mapTree(tree: unknown[], parentPath = ''): EcodeNode[] {
+  _mapTree(tree: RemoteTreeItem[], parentPath = '', parent?: EcodeNode): EcodeNode[] {
     if (!Array.isArray(tree)) return [];
     return tree.map((rawItem) => {
-      const item = rawItem as RemoteTreeItem;
+      const item = rawItem;
       const name = item.name || '';
       const remotePath = parentPath ? `${parentPath.replace(/\/$/, '')}/${name}` : name;
       return new EcodeNode({
@@ -704,6 +805,8 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
             ? 'folder'
             : 'file',
         treeType: item.treeType || '',
+        businessType: item.businessType || '',
+        parent,
         remotePath,
         route: item.route || '',
         hasChild: item.hasChild || false,

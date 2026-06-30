@@ -4,6 +4,7 @@ import { URL } from 'node:url';
 import crypto from 'node:crypto';
 import FormData from 'form-data';
 import { EcodeLogger, type EcodeLoggerLike, type EcodeLoggerOptions, NOOP_LOGGER } from './logger';
+import { RemoteTreeItem } from './type';
 
 type PrimitiveParam = string | number | boolean | null | undefined;
 type Params = Record<string, PrimitiveParam>;
@@ -274,10 +275,10 @@ export class EcodeClient {
     }
   }
 
-  async listTree(folderId = '', typeId = ''): Promise<unknown[]> {
+  async listTree(folderId = '', typeId = ''): Promise<RemoteTreeItem[]> {
     const res = await this._get('/api/ecode/type/tree', { folderId, typeId });
-    const treeData = (await res.json()) as Record<string, unknown[]>;
-    return ([] as unknown[]).concat(
+    const treeData = (await res.json()) as Record<string, RemoteTreeItem[]>;
+    return ([] as RemoteTreeItem[]).concat(
       treeData.system || [],
       treeData.typeList || [],
       treeData.childFolder || [],
@@ -299,6 +300,32 @@ export class EcodeClient {
     }
     const arrayBuffer = await res.arrayBuffer();
     return Buffer.from(arrayBuffer);
+  }
+
+  async markFile(id: string, type?: string) {
+    return await this._post('/api/cloudstore/ecode/markFile', {
+      id,
+      type,
+    });
+  }
+
+  async release(folderId: string) {
+    return await this._post('/api/cloudstore/ecode/release', {
+      folderId,
+    });
+  }
+
+  async deleteReleaseFile(folderIds: string) {
+    return await this._post('/api/cloudstore/ecode/deleteReleaseFile', {
+      folderIds,
+    });
+  }
+
+  async setPreStateOrder(appId: string, preStateOrder: number) {
+    return await this._post('/api/cloudstore/ecode/deleteReleaseFile', {
+      appId,
+      preStateOrder,
+    });
   }
 
   async uploadFile(localPath: string, remotePath: string): Promise<Response> {
