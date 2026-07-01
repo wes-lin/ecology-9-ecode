@@ -6,6 +6,7 @@ import { EcodeClient, EcodeLogger, type RemoteTreeItem } from 'ecode-sdk';
 import { EcodeNode } from './ecodeNode';
 import { EcodeFileSystemProvider } from './fileSystemProvider';
 import { normalizeNewlines, normalizeRemotePath } from '../utils/pathUtils';
+import { getActiveEcodeEnvironment, getEcodeEnvironmentError, getEnvironmentCookieFile } from '../config/ecodeEnvironment';
 import { hashContent, SnapshotStore, type SnapshotEntry } from './snapshotStore';
 
 const mkdir = promisify(fs.mkdir);
@@ -57,8 +58,8 @@ function normalizeContentForWrite(content: string | Buffer): string | Buffer {
 export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>, vscode.Disposable {
   private _onDidChangeTreeData = new vscode.EventEmitter<EcodeNode | undefined | null | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
-  readonly cookieFile: string;
-  private readonly snapshotStore: SnapshotStore;
+  readonly storageRoot: string;
+  private snapshotStore: SnapshotStore | null = null;
   client: EcodeClient | null = null;
   rootItems: EcodeNode[] = [];
   private _busy = false;
@@ -67,9 +68,8 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
   _fileContents = new Map<string, Uint8Array>();
   private _fsRegistration: vscode.Disposable;
 
-  constructor(cookieFile: string) {
-    this.cookieFile = cookieFile;
-    this.snapshotStore = new SnapshotStore(() => path.join(this._getWorkspaceFolderPath(), '.ecode', 'snapshots.json'));
+  constructor(storageRoot: string) {
+    this.storageRoot = storageRoot;
 
     // 注册只读 FileSystemProvider（提供面包屑等原生功能）
     const fileSystemProvider = new EcodeFileSystemProvider(this);
@@ -86,6 +86,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     }
 
     this.client = null;
+    this.snapshotStore = null;
     this.rootItems = [];
     this._fileContents.clear();
     this._onDidChangeTreeData.fire();
@@ -162,12 +163,9 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       return [];
     }
 
-    const config = this._getConfig();
-    const baseUrl = config.get('baseUrl', 'http://localhost');
-    const username = config.get('username', '');
-    const password = config.get('password', '');
-    if (!baseUrl || baseUrl === 'http://localhost' || !username || !password) {
-      return [];
+    const configError = this._getActiveEnvironmentError();
+    if (configError) {
+      return element ? [] : [new EcodeNode({ label: configError, type: 'info' })];
     }
 
     if (!element) {
@@ -216,8 +214,9 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
             skippedDeletes: 0,
             failed: 0,
           };
+          const snapshotStore = this._getSnapshotStore();
           progress.report({ message: 'Scanning remote tree...' });
-          await this.snapshotStore.ensureLoaded();
+          await snapshotStore.ensureLoaded();
           await this._collectDownloadNodes(undefined, nodes);
 
           for (const folder of nodes.folders) {
@@ -245,7 +244,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
           }
 
           await this._reconcileRemoteDeletes(nodes.files, stats);
-          await this.snapshotStore.save();
+          await snapshotStore.save();
           return stats;
         }
       );
@@ -506,7 +505,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     if (updates.appPreStateOrder !== undefined) app.appPreStateOrder = updates.appPreStateOrder;
     this._onDidChangeTreeData.fire(app);
 
-    const targetPath = path.join(this._getWorkspaceFolderPath(), '.ecode', 'ecode-apps.json');
+    const targetPath = this._getAppConfigPath();
     const apps = this._readAppConfig(targetPath).map((current) =>
       current.appId === app.appId ? { ...current, ...updates } : current
     );
@@ -520,7 +519,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     const parent = element.parent;
     if (!parent) return;
 
-    const targetPath = path.join(this._getWorkspaceFolderPath(), '.ecode', 'ecode-apps.json');
+    const targetPath = this._getAppConfigPath();
     const relativePath = element.remotePath.slice(parent.remotePath.length + 1);
     const apps = this._readAppConfig(targetPath).map((current) => {
       if (current.path !== parent.remotePath) return current;
@@ -579,7 +578,8 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     const apps = folders
       .filter((folder) => folder.appId || folder.attribute === 'system')
       .map((folder) => this._toAppConfig(folder, files));
-    const targetPath = path.join(this._getWorkspaceFolderPath(), '.ecode', 'ecode-apps.json');
+    const targetPath = this._getAppConfigPath();
+    await mkdir(path.dirname(targetPath), { recursive: true });
     await writeFile(targetPath, `${JSON.stringify(apps, null, 2)}\n`);
   }
 
@@ -649,7 +649,8 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     const targetPath = this._getLocalPath(element);
     const remoteContent = await this._readRemoteContent(element);
     const remoteHash = hashContent(remoteContent);
-    const snapshot = this.snapshotStore.get(element.remotePath);
+    const snapshotStore = this._getSnapshotStore();
+    const snapshot = snapshotStore.get(element.remotePath);
 
     if (!fs.existsSync(targetPath)) {
       await this._writeRemoteContentToLocal(targetPath, remoteContent);
@@ -675,7 +676,8 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
 
   async _reconcileRemoteDeletes(files: EcodeNode[], stats: DownloadStats): Promise<void> {
     const remotePaths = new Set(files.map((file) => normalizeRemotePath(file.remotePath)));
-    for (const snapshot of this.snapshotStore.list()) {
+    const snapshotStore = this._getSnapshotStore();
+    for (const snapshot of snapshotStore.list()) {
       if (remotePaths.has(snapshot.remotePath)) continue;
       const result = await this._handleDeletedRemoteSnapshot(snapshot);
       stats[result] += 1;
@@ -685,14 +687,14 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
   async _handleDeletedRemoteSnapshot(snapshot: SnapshotEntry): Promise<DeleteResult> {
     const localPath = this._resolveSnapshotLocalPath(snapshot);
     if (!fs.existsSync(localPath)) {
-      this.snapshotStore.delete(snapshot.remotePath);
+      this._getSnapshotStore().delete(snapshot.remotePath);
       return 'unchanged';
     }
 
     const localHash = hashContent(await readFile(localPath));
     if (localHash === snapshot.contentHash) {
       await unlink(localPath);
-      this.snapshotStore.delete(snapshot.remotePath);
+      this._getSnapshotStore().delete(snapshot.remotePath);
       return 'deleted';
     }
 
@@ -705,7 +707,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
   }
 
   _setSnapshot(element: EcodeNode, localPath: string, contentHash: string): void {
-    this.snapshotStore.set({
+    this._getSnapshotStore().set({
       remotePath: element.remotePath,
       localPath: this._getSnapshotLocalPath(localPath),
       contentHash,
@@ -738,10 +740,16 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     return workspaceFolder;
   }
 
+  _getEnvironmentRootPath(): string {
+    const environment = this._getActiveEnvironment();
+    if (!environment) {
+      throw new Error('No eCode environment configured.');
+    }
+    return path.resolve(this._getWorkspaceFolderPath(), environment.localDir);
+  }
+
   _getLocalRootPath(): string {
-    const config = this._getConfig();
-    const localDir = config.get('localDir', 'src');
-    return path.resolve(this._getWorkspaceFolderPath(), localDir);
+    return path.join(this._getEnvironmentRootPath(), 'src');
   }
 
   _getSafeRelativeRemotePath(remotePath: string): string {
@@ -762,7 +770,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     const localRoot = this._getLocalRootPath();
     const relativePath = this._getSafeRelativeRemotePath(element.remotePath);
     const targetPath = path.resolve(localRoot, relativePath);
-    const normalizedRoot = localRoot.toLowerCase();
+    const normalizedRoot = path.resolve(localRoot).toLowerCase();
     const normalizedTarget = targetPath.toLowerCase();
     if (normalizedTarget !== normalizedRoot && !normalizedTarget.startsWith(`${normalizedRoot}${path.sep}`)) {
       throw new Error(`Invalid remote path: ${element.remotePath}`);
@@ -774,14 +782,40 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     return vscode.workspace.getConfiguration('ecode');
   }
 
+  _getActiveEnvironment() {
+    return getActiveEcodeEnvironment(this._getConfig());
+  }
+
+  _getActiveEnvironmentError(): string | undefined {
+    return getEcodeEnvironmentError(this._getActiveEnvironment());
+  }
+
+  _getAppConfigPath(): string {
+    return path.join(this._getEnvironmentRootPath(), '.ecode', 'ecode-apps.json');
+  }
+
+  _getSnapshotFilePath(): string {
+    return path.join(this._getEnvironmentRootPath(), '.ecode', 'snapshots.json');
+  }
+
+  _getSnapshotStore(): SnapshotStore {
+    if (!this.snapshotStore) {
+      this.snapshotStore = new SnapshotStore(() => this._getSnapshotFilePath());
+    }
+    return this.snapshotStore;
+  }
+
   _getClient(): EcodeClient {
     if (!this.client) {
-      const config = this._getConfig();
+      const environment = this._getActiveEnvironment();
+      if (!environment) {
+        throw new Error('No eCode environment configured.');
+      }
       this.client = new EcodeClient({
-        baseUrl: config.get('baseUrl', 'http://localhost'),
-        username: config.get('username', ''),
-        password: config.get('password', ''),
-        cookieFile: this.cookieFile,
+        baseUrl: environment.baseUrl,
+        username: environment.username,
+        password: environment.password,
+        cookieFile: getEnvironmentCookieFile(this.storageRoot, environment),
         logger: new EcodeLogger({
           console: true,
           level: 'debug',

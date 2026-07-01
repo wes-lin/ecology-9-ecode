@@ -1,11 +1,10 @@
-import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { getActiveEcodeEnvironment, getEcodeEnvironments } from './config/ecodeEnvironment';
 import { EcodeNode } from './providers/ecodeNode';
 import { EcodeTreeDataProvider } from './providers/treeDataProvider';
 
 export function activate(context: vscode.ExtensionContext): void {
-  const cookieFile = path.join(context.globalStorageUri.fsPath, 'cookies.json');
-  const treeDataProvider = new EcodeTreeDataProvider(cookieFile);
+  const treeDataProvider = new EcodeTreeDataProvider(context.globalStorageUri.fsPath);
   const treeView = vscode.window.createTreeView('ecodeExplorer', {
     treeDataProvider,
     showCollapseAll: true,
@@ -14,6 +13,36 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(treeView, treeDataProvider);
   context.subscriptions.push(vscode.commands.registerCommand('ecode.refresh', () => treeDataProvider.refresh()));
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.switchEnvironment', async () => {
+      const config = vscode.workspace.getConfiguration('ecode');
+      const environments = getEcodeEnvironments(config);
+      if (environments.length === 0) {
+        const action = await vscode.window.showInformationMessage('No eCode environments configured.', 'Open Settings');
+        if (action === 'Open Settings') {
+          await vscode.commands.executeCommand('workbench.action.openSettings', 'ecode.environments');
+        }
+        return;
+      }
+
+      const activeEnvironment = getActiveEcodeEnvironment(config);
+      const picked = await vscode.window.showQuickPick(
+        environments.map((environment) => ({
+          label: environment.name,
+          description: environment.baseUrl,
+          detail: `User: ${environment.username || '(empty)'} | Local: ${environment.localDir || 'src'}`,
+          environment,
+          picked: environment.name === activeEnvironment?.name,
+        })),
+        { placeHolder: 'Select eCode environment' }
+      );
+      if (!picked) return;
+
+      await config.update('activeEnvironment', picked.environment.name, vscode.ConfigurationTarget.Global);
+      await treeDataProvider.refresh();
+    })
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('ecode.refreshFolder', async (item?: EcodeNode) => {
@@ -95,12 +124,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (
-        event.affectsConfiguration('ecode.baseUrl') ||
-        event.affectsConfiguration('ecode.username') ||
-        event.affectsConfiguration('ecode.password') ||
-        event.affectsConfiguration('ecode.localDir')
-      ) {
+      if (event.affectsConfiguration('ecode.environments') || event.affectsConfiguration('ecode.activeEnvironment')) {
         treeDataProvider.refresh();
       }
     })

@@ -19,25 +19,41 @@
     "configuration": {
       "title": "eCode",
       "properties": {
-        "ecode.baseUrl": {
-          "type": "string",
-          "default": "http://localhost",
-          "description": "eCode server base URL"
+        "ecode.environments": {
+          "type": "array",
+          "default": [],
+          "description": "Named eCode environments.",
+          "items": {
+            "type": "object",
+            "required": ["name", "baseUrl", "username", "password", "localDir"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Environment name"
+              },
+              "baseUrl": {
+                "type": "string",
+                "description": "eCode server base URL"
+              },
+              "username": {
+                "type": "string",
+                "description": "eCode login account"
+              },
+              "password": {
+                "type": "string",
+                "description": "eCode login password"
+              },
+              "localDir": {
+                "type": "string",
+                "description": "Local directory to download ecode source files"
+              }
+            }
+          }
         },
-        "ecode.username": {
+        "ecode.activeEnvironment": {
           "type": "string",
           "default": "",
-          "description": "eCode login account"
-        },
-        "ecode.password": {
-          "type": "string",
-          "default": "",
-          "description": "eCode login password"
-        },
-        "ecode.localDir": {
-          "type": "string",
-          "default": "src",
-          "description": "Local directory to download ecode source files"
+          "description": "Active eCode environment name"
         }
       }
     },
@@ -60,6 +76,12 @@
       ]
     },
     "commands": [
+      {
+        "command": "ecode.switchEnvironment",
+        "title": "Switch Environment",
+        "icon": "$(server-environment)",
+        "enablement": "!ecodeExplorer.busy"
+      },
       {
         "command": "ecode.refresh",
         "title": "Refresh",
@@ -136,19 +158,24 @@
     "menus": {
       "view/title": [
         {
-          "command": "ecode.refresh",
+          "command": "ecode.switchEnvironment",
           "when": "view == ecodeExplorer && !ecodeExplorer.busy",
-          "group": "navigation"
+          "group": "navigation@0"
         },
         {
-          "command": "ecode.openSettings",
+          "command": "ecode.refresh",
           "when": "view == ecodeExplorer && !ecodeExplorer.busy",
-          "group": "navigation"
+          "group": "navigation@1"
         },
         {
           "command": "ecode.download",
           "when": "view == ecodeExplorer && !ecodeExplorer.busy",
-          "group": "navigation"
+          "group": "navigation@2"
+        },
+        {
+          "command": "ecode.openSettings",
+          "when": "view == ecodeExplorer && !ecodeExplorer.busy",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
