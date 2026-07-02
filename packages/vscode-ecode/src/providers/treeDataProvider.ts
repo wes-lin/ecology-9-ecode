@@ -6,7 +6,11 @@ import { EcodeClient, EcodeLogger, type RemoteTreeItem } from 'ecode-sdk';
 import { EcodeNode } from './ecodeNode';
 import { EcodeFileSystemProvider } from './fileSystemProvider';
 import { normalizeNewlines, normalizeRemotePath } from '../utils/pathUtils';
-import { getActiveEcodeEnvironment, getEcodeEnvironmentError, getEnvironmentCookieFile } from '../config/ecodeEnvironment';
+import {
+  getActiveEcodeEnvironment,
+  getEcodeEnvironmentError,
+  getEnvironmentCookieFile,
+} from '../config/ecodeEnvironment';
 import { hashContent, SnapshotStore, type SnapshotEntry } from './snapshotStore';
 
 const mkdir = promisify(fs.mkdir);
@@ -41,6 +45,7 @@ type EcodeAppConfig = {
   preStateFiles: string[];
   resources: string[];
   configs: string[];
+  debugMode?: 'y' | 'n';
 };
 
 function getErrorMessage(error: unknown): string {
@@ -143,6 +148,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
   private _getIcon(element: EcodeNode): vscode.ThemeIcon {
     if (element.loading) return new vscode.ThemeIcon('sync~spin');
     if (element.type === 'file') return new vscode.ThemeIcon('file');
+    if (element.debugMode === 'y') return new vscode.ThemeIcon('debug');
     if (element.businessType === 'project') return new vscode.ThemeIcon('project');
     if (element.businessType === 'type') return new vscode.ThemeIcon('symbol-folder');
     if (element.appId) {
@@ -419,6 +425,43 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     });
   }
 
+  async createNewApp(element: EcodeNode): Promise<void> {
+    await this._showUnsupportedRemoteCommand('Create New App', element);
+  }
+
+  async createNewType(element: EcodeNode): Promise<void> {
+    await this._showUnsupportedRemoteCommand('Create New Type', element);
+  }
+
+  async createNewFolder(element: EcodeNode): Promise<void> {
+    await this._showUnsupportedRemoteCommand('Create New Folder', element);
+  }
+
+  async createNewFile(element: EcodeNode, extension: 'js' | 'css' | 'md'): Promise<void> {
+    await this._showUnsupportedRemoteCommand(`Create New ${extension.toUpperCase()}`, element);
+  }
+
+  async renameItem(element: EcodeNode): Promise<void> {
+    await this._showUnsupportedRemoteCommand('Rename', element);
+  }
+
+  async uploadResource(element: EcodeNode): Promise<void> {
+    const selected = await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectFolders: false,
+      canSelectMany: false,
+      openLabel: 'Upload Resource',
+    });
+    const file = selected?.[0];
+    if (!file) return;
+
+    vscode.window.showInformationMessage(`Selected resource: ${file.fsPath}`);
+  }
+
+  async _showUnsupportedRemoteCommand(command: string, element: EcodeNode): Promise<void> {
+    vscode.window.showInformationMessage(`${command} for ${element.label} is not implemented yet.`);
+  }
+
   async _withNodeLoading(element: EcodeNode, operation: () => Promise<void>): Promise<void> {
     element.loading = true;
     this._onDidChangeTreeData.fire(element);
@@ -441,6 +484,12 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
 
     if (element.type === 'folder') {
       values.push('canRefreshFolder');
+      if (element.businessType === 'type') {
+        values.push('canCreateNewApp', 'canCreateNewType');
+      }
+      if (element.attribute === 'resource') {
+        values.push('canUploadResource');
+      }
     }
     if (element.type === 'file') {
       values.push('canOpenLocal', 'canViewRemote', 'canCompare');
@@ -453,14 +502,17 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       }
     }
     if (element.deletable) {
-      values.push('canDelete');
+      values.push('canDelete', 'canRename');
     }
     if (element.appId) {
-      values.push('canSetPreloadOrder');
-      if (element.appStatus === 'released') {
-        values.push('canCancelRelease');
-      } else {
-        values.push('canRelease');
+      values.push('canCreateNewFolder', 'canCreateNewJs', 'canCreateNewCss', 'canCreateNewMd');
+      if (element.deletable) {
+        values.push('canSetPreloadOrder');
+        if (element.appStatus === 'released') {
+          values.push('canCancelRelease');
+        } else {
+          values.push('canRelease');
+        }
       }
     }
 
@@ -603,6 +655,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       preStateFiles: this._collectPreStateFiles(app, files),
       resources: this._collectResources(app, files),
       configs: this._collectConfigs(app, files),
+      debugMode: app.debugMode,
     };
   }
 
@@ -851,6 +904,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
         appStatus: item.attribute === 'system' ? 'released' : item.status || '',
         appPreStateOrder: item.preStateOrder || 0,
         fileExtension: item.fileExtension || '',
+        debugMode: item.debugMode,
       });
     });
   }

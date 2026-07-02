@@ -111,6 +111,54 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.createNewApp', async (item: EcodeNode) => {
+      await treeDataProvider.createNewApp(item);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.createNewType', async (item: EcodeNode) => {
+      await treeDataProvider.createNewType(item);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.createNewFolder', async (item: EcodeNode) => {
+      await treeDataProvider.createNewFolder(item);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.createNewJs', async (item: EcodeNode) => {
+      await treeDataProvider.createNewFile(item, 'js');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.createNewCss', async (item: EcodeNode) => {
+      await treeDataProvider.createNewFile(item, 'css');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.createNewMd', async (item: EcodeNode) => {
+      await treeDataProvider.createNewFile(item, 'md');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.renameItem', async (item: EcodeNode) => {
+      await treeDataProvider.renameItem(item);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.uploadResource', async (item: EcodeNode) => {
+      await treeDataProvider.uploadResource(item);
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('ecode.openSettings', () => {
       vscode.commands.executeCommand('workbench.action.openSettings', 'ecode');
     })

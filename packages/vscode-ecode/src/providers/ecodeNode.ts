@@ -18,6 +18,7 @@ export type EcodeNodeOptions = {
   appPreStateOrder?: number;
   fileExtension?: string;
   loading?: boolean;
+  debugMode?: 'y' | 'n';
 };
 
 export class EcodeNode {
@@ -38,6 +39,7 @@ export class EcodeNode {
   appPreStateOrder?: number;
   fileExtension?: string;
   loading = false;
+  debugMode?: 'y' | 'n';
   children?: EcodeNode[];
 
   constructor(options: EcodeNodeOptions) {

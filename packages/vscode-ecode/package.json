@@ -25,7 +25,13 @@
           "description": "Named eCode environments.",
           "items": {
             "type": "object",
-            "required": ["name", "baseUrl", "username", "password", "localDir"],
+            "required": [
+              "name",
+              "baseUrl",
+              "username",
+              "password",
+              "localDir"
+            ],
             "properties": {
               "name": {
                 "type": "string",
@@ -141,7 +147,7 @@
       },
       {
         "command": "ecode.setPreload",
-        "title": "Set Preload",
+        "title": "Preload",
         "enablement": "!ecodeExplorer.busy"
       },
       {
@@ -151,7 +157,47 @@
       },
       {
         "command": "ecode.setPreloadOrder",
-        "title": "Set Preload Order",
+        "title": "Preload Order",
+        "enablement": "!ecodeExplorer.busy"
+      },
+      {
+        "command": "ecode.createNewApp",
+        "title": "New App",
+        "enablement": "!ecodeExplorer.busy"
+      },
+      {
+        "command": "ecode.createNewType",
+        "title": "New Type",
+        "enablement": "!ecodeExplorer.busy"
+      },
+      {
+        "command": "ecode.createNewFolder",
+        "title": "New Folder",
+        "enablement": "!ecodeExplorer.busy"
+      },
+      {
+        "command": "ecode.createNewJs",
+        "title": "New JS",
+        "enablement": "!ecodeExplorer.busy"
+      },
+      {
+        "command": "ecode.createNewCss",
+        "title": "New CSS",
+        "enablement": "!ecodeExplorer.busy"
+      },
+      {
+        "command": "ecode.createNewMd",
+        "title": "New Markdown",
+        "enablement": "!ecodeExplorer.busy"
+      },
+      {
+        "command": "ecode.renameItem",
+        "title": "Rename",
+        "enablement": "!ecodeExplorer.busy"
+      },
+      {
+        "command": "ecode.uploadResource",
+        "title": "Upload Resource",
         "enablement": "!ecodeExplorer.busy"
       }
     ],
@@ -182,47 +228,87 @@
         {
           "command": "ecode.refreshFolder",
           "when": "view == ecodeExplorer && viewItem =~ /canRefreshFolder/",
-          "group": "navigation"
-        },
-        {
-          "command": "ecode.deleteItem",
-          "when": "view == ecodeExplorer && viewItem =~ /canDelete/",
-          "group": "navigation"
-        },
-        {
-          "command": "ecode.compareWithRemote",
-          "when": "view == ecodeExplorer && viewItem =~ /canCompare/",
-          "group": "navigation"
+          "group": "navigation@0"
         },
         {
           "command": "ecode.viewFile",
           "when": "view == ecodeExplorer && viewItem =~ /canViewRemote/",
-          "group": "navigation"
+          "group": "inline@0"
+        },
+        {
+          "command": "ecode.compareWithRemote",
+          "when": "view == ecodeExplorer && viewItem =~ /canCompare/",
+          "group": "inline@1"
+        },
+        {
+          "command": "ecode.createNewApp",
+          "when": "view == ecodeExplorer && viewItem =~ /canCreateNewApp/",
+          "group": "new@0"
+        },
+        {
+          "command": "ecode.createNewType",
+          "when": "view == ecodeExplorer && viewItem =~ /canCreateNewType/",
+          "group": "new@1"
+        },
+        {
+          "command": "ecode.createNewFolder",
+          "when": "view == ecodeExplorer && viewItem =~ /canCreateNewFolder/",
+          "group": "new@2"
+        },
+        {
+          "command": "ecode.createNewJs",
+          "when": "view == ecodeExplorer && viewItem =~ /canCreateNewJs/",
+          "group": "new@3"
+        },
+        {
+          "command": "ecode.createNewCss",
+          "when": "view == ecodeExplorer && viewItem =~ /canCreateNewCss/",
+          "group": "new@4"
+        },
+        {
+          "command": "ecode.createNewMd",
+          "when": "view == ecodeExplorer && viewItem =~ /canCreateNewMd/",
+          "group": "new@5"
+        },
+        {
+          "command": "ecode.uploadResource",
+          "when": "view == ecodeExplorer && viewItem =~ /canUploadResource/",
+          "group": "new@6"
         },
         {
           "command": "ecode.release",
           "when": "view == ecodeExplorer && viewItem =~ /canRelease/",
-          "group": "navigation"
+          "group": "release@0"
         },
         {
           "command": "ecode.cancelRelease",
           "when": "view == ecodeExplorer && viewItem =~ /canCancelRelease/",
-          "group": "navigation"
+          "group": "release@1"
         },
         {
           "command": "ecode.setPreload",
           "when": "view == ecodeExplorer && viewItem =~ /canSetScriptPreload/",
-          "group": "navigation"
+          "group": "preload@0"
         },
         {
           "command": "ecode.cancelPreload",
           "when": "view == ecodeExplorer && viewItem =~ /canCancelPreload/",
-          "group": "navigation"
+          "group": "preload@1"
         },
         {
           "command": "ecode.setPreloadOrder",
           "when": "view == ecodeExplorer && viewItem =~ /canSetPreloadOrder/",
-          "group": "navigation"
+          "group": "preload@2"
+        },
+        {
+          "command": "ecode.renameItem",
+          "when": "view == ecodeExplorer && viewItem =~ /canRename/",
+          "group": "modify@0"
+        },
+        {
+          "command": "ecode.deleteItem",
+          "when": "view == ecodeExplorer && viewItem =~ /canDelete/",
+          "group": "modify@1"
         }
       ]
     }

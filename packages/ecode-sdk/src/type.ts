@@ -11,4 +11,5 @@ export type RemoteTreeItem = {
   preStateOrder?: number;
   fileExtension?: string;
   route?: string;
+  debugMode?: 'y' | 'n';
 };
