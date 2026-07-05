@@ -328,20 +328,64 @@ export class EcodeClient {
     });
   }
 
+  async updateTypeName(id: string, name: string) {
+    return await this._post('/api/ecode/type/updateName', {
+      id,
+      name,
+    });
+  }
+
+  async updateFolderName(folderId: string, name: string) {
+    return await this._post('api/cloudstore/ecode/updateFolderName', {
+      folderId,
+      name,
+    });
+  }
+
+  async updateFileName(id: string, name: string) {
+    return await this._post('/api/cloudstore/ecode/updateName', {
+      id,
+      name,
+    });
+  }
+
+  async addType(name: string, parentId?: string) {
+    return await this._post('/api/ecode/type/add', { name, parentId });
+  }
+
+  async addFolder(name: string, parentId?: string, typeId?: string) {
+    return await this._post('/api/cloudstore/ecode/addFolder', {
+      parentId,
+      name,
+      typeId,
+    });
+  }
+
+  async addFile(folderId: string, name: string, type: 'js' | 'css' | 'md') {
+    return await this._post('/api/cloudstore/ecode/addFile', {
+      folderId,
+      name,
+      type,
+    });
+  }
+
+  async deleteFile(id: string) {
+    return await this._post('/api/cloudstore/ecode/logicalDeleteFile', { id });
+  }
+
+  async deleteFolder(folderId: string) {
+    return await this._post('/api/cloudstore/ecode/logicalDeleteFolder', { folderId });
+  }
+
+  async deleteType(id: string) {
+    return await this._post('/api/ecode/type/logicalDelete', { id });
+  }
+
   async uploadFile(localPath: string, remotePath: string): Promise<Response> {
     const form = new FormData();
     form.append('path', remotePath);
     form.append('file', createReadStream(localPath));
     return this._post('/api/ecode/upload', form, form.getHeaders());
-  }
-
-  async downloadFile(remotePath: string): Promise<Buffer> {
-    const res = await this._post('/api/ecode/download', { path: remotePath });
-    if (!res.ok) {
-      throw new Error(`Download failed: HTTP ${res.status}`);
-    }
-    const arrayBuffer = await res.arrayBuffer();
-    return Buffer.from(arrayBuffer);
   }
 
   _buildUrl(path: string, params?: Params): string {
@@ -387,6 +431,11 @@ export class EcodeClient {
     return code === '002' && resData.msg === '登录信息超时';
   }
 
+  _throwIfApiFailed(resData: unknown): void {
+    if (!isRecord(resData) || resData.api_status !== false) return;
+    throw new Error(typeof resData.msg === 'string' && resData.msg ? resData.msg : 'Request failed');
+  }
+
   async _request(path: string, options: RequestOptions = {}): Promise<Response> {
     const url = this._buildUrl(path, options.params);
     const { headers, body } = this._buildFetchOptions(options);
@@ -409,6 +458,7 @@ export class EcodeClient {
     try {
       const resData = await cloned.json();
       this.logger.logResponse(method, url, res.status, resData, duration);
+      this._throwIfApiFailed(resData);
 
       if (this._isSessionExpired(resData)) {
         this.logger.logSessionExpired(url);

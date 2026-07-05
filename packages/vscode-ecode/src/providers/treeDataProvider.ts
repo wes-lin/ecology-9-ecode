@@ -346,14 +346,29 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       return;
     }
 
+    const kind = this._getNodeKindLabel(element);
     const confirm = await vscode.window.showWarningMessage(
-      `Delete ${element.type} ${element.remotePath}?`,
+      `Delete ${kind} "${element.label}"?`,
       { modal: true },
       'Delete'
     );
     if (confirm !== 'Delete') return;
 
-    vscode.window.showInformationMessage('Delete is not implemented yet.');
+    const client = this._getClient();
+    await this._withNodeLoading(element, async () => {
+      try {
+        if (element.businessType === 'type') {
+          await client.deleteType(this._requireNodeId(element));
+        } else if (element.type === 'file') {
+          await client.deleteFile(this._requireNodeId(element));
+        } else {
+          await client.deleteFolder(this._requireNodeId(element));
+        }
+        await this._refreshStructuralParent(element);
+      } catch (error) {
+        vscode.window.showErrorMessage(`Delete ${kind} failed: ${getErrorMessage(error)}`);
+      }
+    });
   }
 
   async release(element: EcodeNode): Promise<void> {
@@ -426,23 +441,115 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
   }
 
   async createNewApp(element: EcodeNode): Promise<void> {
-    await this._showUnsupportedRemoteCommand('Create New App', element);
+    if (element.businessType !== 'type') {
+      vscode.window.showWarningMessage('New app is only supported under type nodes.');
+      return;
+    }
+
+    const name = await this._promptForName({ title: 'Create New App', kind: 'app' });
+    if (!name) return;
+
+    const client = this._getClient();
+    await this._withNodeLoading(element, async () => {
+      try {
+        await client.addFolder(name, undefined, this._requireNodeId(element));
+        await this.refreshFolder(element);
+      } catch (error) {
+        vscode.window.showErrorMessage(`Create app failed: ${getErrorMessage(error)}`);
+      }
+    });
   }
 
   async createNewType(element: EcodeNode): Promise<void> {
-    await this._showUnsupportedRemoteCommand('Create New Type', element);
+    if (element.businessType !== 'type') {
+      vscode.window.showWarningMessage('New type is only supported under type nodes.');
+      return;
+    }
+
+    const name = await this._promptForName({ title: 'Create New Type', kind: 'type' });
+    if (!name) return;
+
+    const client = this._getClient();
+    await this._withNodeLoading(element, async () => {
+      try {
+        await client.addType(name, this._requireNodeId(element));
+        await this.refreshFolder(element);
+      } catch (error) {
+        vscode.window.showErrorMessage(`Create type failed: ${getErrorMessage(error)}`);
+      }
+    });
   }
 
   async createNewFolder(element: EcodeNode): Promise<void> {
-    await this._showUnsupportedRemoteCommand('Create New Folder', element);
+    if (element.type !== 'folder') {
+      vscode.window.showWarningMessage('New folder is only supported under folder nodes.');
+      return;
+    }
+
+    const name = await this._promptForName({ title: 'Create New Folder', kind: 'folder' });
+    if (!name) return;
+
+    const client = this._getClient();
+    await this._withNodeLoading(element, async () => {
+      try {
+        await client.addFolder(name, this._requireNodeId(element));
+        await this.refreshFolder(element);
+      } catch (error) {
+        vscode.window.showErrorMessage(`Create folder failed: ${getErrorMessage(error)}`);
+      }
+    });
   }
 
   async createNewFile(element: EcodeNode, extension: 'js' | 'css' | 'md'): Promise<void> {
-    await this._showUnsupportedRemoteCommand(`Create New ${extension.toUpperCase()}`, element);
+    if (element.type !== 'folder') {
+      vscode.window.showWarningMessage(`New ${extension.toUpperCase()} file is only supported under folder nodes.`);
+      return;
+    }
+
+    const name = await this._promptForName({
+      title: `Create New ${extension.toUpperCase()} File`,
+      kind: `${extension} file`,
+      extension,
+    });
+    if (!name) return;
+
+    const client = this._getClient();
+    await this._withNodeLoading(element, async () => {
+      try {
+        await client.addFile(this._requireNodeId(element), name, extension);
+        await this.refreshFolder(element);
+      } catch (error) {
+        vscode.window.showErrorMessage(`Create ${extension.toUpperCase()} file failed: ${getErrorMessage(error)}`);
+      }
+    });
   }
 
   async renameItem(element: EcodeNode): Promise<void> {
-    await this._showUnsupportedRemoteCommand('Rename', element);
+    const kind = this._getNodeKindLabel(element);
+    const extension = element.type === 'file' ? this._getNodeFileExtension(element) : undefined;
+    const name = await this._promptForName({
+      title: `Rename ${kind}`,
+      kind,
+      value: element.label,
+      extension,
+    });
+    if (!name) return;
+
+    const client = this._getClient();
+    await this._withNodeLoading(element, async () => {
+      try {
+        if (element.businessType === 'type') {
+          await client.updateTypeName(this._requireNodeId(element), name);
+        } else if (element.type === 'file') {
+          await client.updateFileName(this._requireNodeId(element), name);
+        } else {
+          await client.updateFolderName(this._requireNodeId(element), name);
+        }
+        await this._refreshStructuralParent(element);
+      } catch (error) {
+        vscode.window.showErrorMessage(`Rename ${kind} failed: ${getErrorMessage(error)}`);
+      }
+    });
   }
 
   async uploadResource(element: EcodeNode): Promise<void> {
@@ -458,8 +565,85 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     vscode.window.showInformationMessage(`Selected resource: ${file.fsPath}`);
   }
 
-  async _showUnsupportedRemoteCommand(command: string, element: EcodeNode): Promise<void> {
-    vscode.window.showInformationMessage(`${command} for ${element.label} is not implemented yet.`);
+  _requireNodeId(element: EcodeNode): string {
+    if (!element.id) {
+      throw new Error(`${this._getNodeKindLabel(element)} id is missing.`);
+    }
+    return element.id;
+  }
+
+  _getNodeKindLabel(element: EcodeNode): string {
+    if (element.businessType === 'type') return 'type';
+    if (element.type === 'file') return 'file';
+    if (element.appId) return 'app';
+    return 'folder';
+  }
+
+  _getNodeFileExtension(element: EcodeNode): string | undefined {
+    if (element.type !== 'file') return undefined;
+    const extension = element.fileExtension?.trim().replace(/^\./, '');
+    if (extension) return extension;
+    const match = element.label.match(/\.([^.]+)$/);
+    return match?.[1];
+  }
+
+  _normalizeName(value: string, extension?: string): string {
+    const trimmed = value.trim();
+    if (!extension) return trimmed;
+
+    const normalizedExtension = extension.replace(/^\./, '');
+    if (!trimmed.includes('.')) {
+      return `${trimmed}.${normalizedExtension}`;
+    }
+
+    const currentExtension = trimmed.match(/\.([^.]+)$/)?.[1];
+    if (currentExtension !== normalizedExtension) {
+      throw new Error(`Name must end with .${normalizedExtension}.`);
+    }
+
+    return trimmed;
+  }
+
+  async _promptForName(options: {
+    title: string;
+    kind: string;
+    value?: string;
+    extension?: string;
+  }): Promise<string | undefined> {
+    const normalizedExtension = options.extension?.replace(/^\./, '');
+    const value = await vscode.window.showInputBox({
+      title: options.title,
+      prompt: normalizedExtension
+        ? `Enter ${options.kind} name (.${normalizedExtension} will be preserved).`
+        : `Enter ${options.kind} name.`,
+      value: options.value,
+      validateInput: (input) => {
+        const trimmed = input.trim();
+        if (!trimmed) return `${options.kind} name is required.`;
+        if (/[/\\]/.test(trimmed)) return `${options.kind} name cannot contain / or \\.`;
+        if (normalizedExtension) {
+          const hasExtension = trimmed.includes('.');
+          if (hasExtension) {
+            const currentExtension = trimmed.match(/\.([^.]+)$/)?.[1];
+            if (currentExtension !== normalizedExtension) {
+              return `${options.kind} name must end with .${normalizedExtension}.`;
+            }
+          }
+        }
+        return undefined;
+      },
+    });
+
+    if (value === undefined) return undefined;
+    return this._normalizeName(value, normalizedExtension);
+  }
+
+  async _refreshStructuralParent(element: EcodeNode): Promise<void> {
+    if (element.parent) {
+      await this.refreshFolder(element.parent);
+      return;
+    }
+    await this.refresh();
   }
 
   async _withNodeLoading(element: EcodeNode, operation: () => Promise<void>): Promise<void> {
