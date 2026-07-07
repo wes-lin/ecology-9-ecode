@@ -287,10 +287,10 @@ export class EcodeClient {
     );
   }
 
-  async viewFile(id: string): Promise<string | Buffer> {
+  async viewFile(id: string): Promise<string> {
     const res = await this._get('/api/cloudstore/ecode/one', { id });
-    const resData = (await res.json()) as { data?: { content?: string | Buffer } };
-    return resData.data?.content ?? '';
+    const resData = (await res.json()) as { data?: { content?: string } };
+    return resData.data?.content?.trim() ?? '';
   }
 
   async viewResource(route: string): Promise<Buffer> {
