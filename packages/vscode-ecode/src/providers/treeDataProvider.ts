@@ -6,6 +6,7 @@ import { EcodeClient, EcodeLogger, type RemoteTreeItem } from 'ecode-sdk';
 import { EcodeNode } from './ecodeNode';
 import { EcodeFileSystemProvider } from './fileSystemProvider';
 import { normalizeNewlines, normalizeRemotePath } from '../utils/pathUtils';
+import type { EcodeAppConfig } from '../config/ecodeAppConfig';
 import {
   getActiveEcodeEnvironment,
   getEcodeEnvironmentError,
@@ -18,22 +19,6 @@ const writeFile = promisify(fs.writeFile);
 type DownloadNodes = {
   folders: EcodeNode[];
   files: EcodeNode[];
-};
-
-type EcodeAppConfig = {
-  path: string;
-  appId: string;
-  appStatus: string;
-  appPreStateOrder: number;
-  preStateFiles: string[];
-  resources: string[];
-  configs: string[];
-  debugMode?: 'y' | 'n';
-};
-
-type LocalEcodeAppConfig = Partial<Omit<EcodeAppConfig, 'appId' | 'path'>> & {
-  appId?: string;
-  path?: string;
 };
 
 function getErrorMessage(error: unknown): string {
@@ -124,7 +109,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
         treeItem.description = 'P';
       }
       if (element.type === 'file') {
-        treeItem.command = { command: 'ecode.openLocalFile', title: 'Open Local File', arguments: [element] };
+        treeItem.command = { command: 'ecode.viewFile', title: 'View Remote File', arguments: [element] };
       }
     }
 
@@ -181,10 +166,10 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     return [];
   }
 
-  async download(): Promise<void> {
+  async download(): Promise<boolean> {
     if (this._busy) {
       vscode.window.showWarningMessage('eCode download is already running.');
-      return;
+      return false;
     }
 
     await this._setBusy(true);
@@ -237,8 +222,10 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       } else {
         vscode.window.showInformationMessage('eCode source download completed.');
       }
+      return true;
     } catch (error) {
       vscode.window.showErrorMessage(`Download failed: ${getErrorMessage(error)}`);
+      return false;
     } finally {
       await this._setBusy(false);
     }
@@ -261,26 +248,10 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     }
   }
 
-  async openLocalFile(element: EcodeNode): Promise<void> {
-    if (this._busy) {
-      vscode.window.showWarningMessage('eCode Explorer is busy downloading.');
-      return;
+  handleRemoteFileClosed(document: vscode.TextDocument): void {
+    if (document.uri.scheme === 'ecode') {
+      this._fileContents.delete(document.uri.path);
     }
-
-    try {
-      const targetPath = await this._ensureLocalFileFromRemote(element, { overwrite: false });
-      await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(targetPath), { preview: false });
-    } catch (error) {
-      vscode.window.showErrorMessage(`Open local file failed: ${getErrorMessage(error)}`);
-    }
-  }
-
-  handleLocalFileClosed(document: vscode.TextDocument): void {
-    const element = this._findNodeByLocalUri(document.uri);
-    if (!element) return;
-
-    const remoteUri = this._getRemoteUri(element);
-    this._fileContents.delete(remoteUri.path);
   }
 
   async compareWithRemote(element: EcodeNode): Promise<void> {
@@ -290,7 +261,9 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     }
 
     try {
-      const targetPath = await this._ensureLocalFileFromRemote(element, { overwrite: false });
+      if (element.type !== 'file') throw new Error('Select a local file.');
+      const targetPath = this._getLocalPath(element);
+      if (!fs.existsSync(targetPath)) throw new Error(`Local file does not exist: ${targetPath}`);
       const remoteContent = await this._readRemoteContent(element);
       const safePath = `/${this._getSafeRelativeRemotePath(element.remotePath).replace(/\\/g, '/')}`;
       const remoteUri = vscode.Uri.from({
@@ -648,7 +621,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       }
     }
     if (element.type === 'file') {
-      values.push('canOpenLocal', 'canViewRemote', 'canCompare');
+      values.push('canViewRemote');
       if (element.deletable) {
         if (element.state === 'pre-state') {
           values.push('canCancelPreload');
@@ -677,32 +650,6 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
 
   _getRemoteUri(element: EcodeNode): vscode.Uri {
     return vscode.Uri.parse(`ecode:/${element.remotePath}`);
-  }
-
-  _findNodeByLocalUri(uri: vscode.Uri): EcodeNode | undefined {
-    if (uri.scheme !== 'file') return undefined;
-
-    const normalizedTarget = path.normalize(uri.fsPath).toLowerCase();
-    return this._findNodeByLocalPath(normalizedTarget, this.rootItems);
-  }
-
-  _findNodeByLocalPath(normalizedTarget: string, nodes: EcodeNode[]): EcodeNode | undefined {
-    for (const node of nodes) {
-      if (node.type === 'file') {
-        try {
-          if (path.normalize(this._getLocalPath(node)).toLowerCase() === normalizedTarget) {
-            return node;
-          }
-        } catch {
-          // ignore nodes with invalid remote paths
-        }
-      }
-      if (node.children) {
-        const child = this._findNodeByLocalPath(normalizedTarget, node.children);
-        if (child) return child;
-      }
-    }
-    return undefined;
   }
 
   async _updateAppStatus(
@@ -785,14 +732,9 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       .filter((folder) => folder.appId || folder.attribute === 'system')
       .map((folder) => this._toAppConfig(folder, files));
     const targetPath = this._getAppConfigPath();
-    const localTargetPath = this._getLocalAppConfigPath();
     const content = `${JSON.stringify(apps, null, 2)}\n`;
     await mkdir(path.dirname(targetPath), { recursive: true });
     await writeFile(targetPath, content);
-    if (!fs.existsSync(localTargetPath)) {
-      await writeFile(localTargetPath, '[]\n');
-    }
-    await this._reconcileLocalAppOverrides();
   }
 
   async _updateGeneratedAppConfigs(update: (apps: EcodeAppConfig[]) => EcodeAppConfig[]): Promise<void> {
@@ -800,58 +742,6 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     await mkdir(path.dirname(targetPath), { recursive: true });
     const apps = update(this._readAppConfig(targetPath));
     await writeFile(targetPath, `${JSON.stringify(apps, null, 2)}\n`);
-    await this._reconcileLocalAppOverrides();
-  }
-
-  async _reconcileLocalAppOverrides(): Promise<void> {
-    const localTargetPath = this._getLocalAppConfigPath();
-    if (!fs.existsSync(localTargetPath)) return;
-    const baseline = this._readAppConfig(this._getAppConfigPath());
-    const overrides = this._readLocalAppConfig()
-      .map((override) => {
-        const remote = baseline.find((candidate) =>
-          override.appId ? candidate.appId === override.appId : candidate.path === override.path
-        );
-        const next = { ...override };
-        this._removeMatchingLocalFields(next, remote);
-        return next;
-      })
-      .filter((override) => this._hasLocalOverrideFields(override));
-    await writeFile(localTargetPath, `${JSON.stringify(overrides, null, 2)}\n`);
-  }
-
-  _removeMatchingLocalFields(local: LocalEcodeAppConfig, remote?: EcodeAppConfig): void {
-    if (!remote) return;
-    for (const key of [
-      'appStatus',
-      'appPreStateOrder',
-      'preStateFiles',
-      'resources',
-      'configs',
-      'debugMode',
-    ] as const) {
-      if (local[key] !== undefined && JSON.stringify(local[key]) === JSON.stringify(remote[key])) {
-        delete local[key];
-      }
-    }
-  }
-
-  _hasLocalOverrideFields(config: LocalEcodeAppConfig): boolean {
-    return Object.keys(config).some((key) => key !== 'appId' && key !== 'path');
-  }
-
-  _readLocalAppConfig(): LocalEcodeAppConfig[] {
-    const targetPath = this._getLocalAppConfigPath();
-    if (!fs.existsSync(targetPath)) return [];
-    try {
-      const parsed = JSON.parse(fs.readFileSync(targetPath, 'utf8')) as LocalEcodeAppConfig[];
-      if (!Array.isArray(parsed)) {
-        throw new Error('Expected a JSON array.');
-      }
-      return parsed;
-    } catch (error) {
-      throw new Error(`Invalid local app overrides at ${targetPath}: ${getErrorMessage(error)}`);
-    }
   }
 
   _readAppConfig(targetPath: string): EcodeAppConfig[] {
@@ -869,6 +759,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     return {
       path: app.remotePath,
       appId: app.appId,
+      typeId: app.parent?.id || '',
       appStatus: app.appStatus || '',
       appPreStateOrder: app.appPreStateOrder || 0,
       preStateFiles: this._collectPreStateFiles(app, files),
@@ -985,10 +876,6 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
 
   _getAppConfigPath(): string {
     return path.join(this._getEnvironmentRootPath(), '.ecode', 'ecode-apps.json');
-  }
-
-  _getLocalAppConfigPath(): string {
-    return path.join(this._getEnvironmentRootPath(), '.ecode', 'ecode-apps.local.json');
   }
 
   _getClient(): EcodeClient {

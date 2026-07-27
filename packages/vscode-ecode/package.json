@@ -15,6 +15,9 @@
     "Other"
   ],
   "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "configuration": {
       "title": "eCode",
@@ -75,8 +78,13 @@
     "views": {
       "ecode": [
         {
+          "id": "ecodeLocalExplorer",
+          "name": "Local",
+          "when": "true"
+        },
+        {
           "id": "ecodeExplorer",
-          "name": "Explorer",
+          "name": "Remote",
           "when": "true"
         }
       ]
@@ -104,12 +112,6 @@
         "command": "ecode.download",
         "title": "Download",
         "icon": "$(cloud-download)",
-        "enablement": "!ecodeExplorer.busy"
-      },
-      {
-        "command": "ecode.openLocalFile",
-        "title": "Open Local File",
-        "icon": "$(go-to-file)",
         "enablement": "!ecodeExplorer.busy"
       },
       {
@@ -199,29 +201,116 @@
         "command": "ecode.uploadResource",
         "title": "Upload Resource",
         "enablement": "!ecodeExplorer.busy"
+      },
+      {
+        "command": "ecode.local.refresh",
+        "title": "Refresh Local Tree",
+        "icon": "$(refresh)",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.openFile",
+        "title": "Open Local File",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.createNewApp",
+        "title": "New Local App",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.createNewType",
+        "title": "New Local Type",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.createNewFolder",
+        "title": "New Local Folder",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.createNewJs",
+        "title": "New Local JS",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.createNewCss",
+        "title": "New Local CSS",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.createNewMd",
+        "title": "New Local Markdown",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.uploadResource",
+        "title": "Add Local Resource",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.renameItem",
+        "title": "Rename Local Item",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.deleteItem",
+        "title": "Delete Local Item",
+        "icon": "$(trash)",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.release",
+        "title": "Set Local App Released",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.cancelRelease",
+        "title": "Set Local App Unreleased",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.setPreload",
+        "title": "Set Local File Preload",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.cancelPreload",
+        "title": "Cancel Local File Preload",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.setPreloadOrder",
+        "title": "Set Local App Preload Order",
+        "category": "eCode"
       }
     ],
     "menus": {
       "view/title": [
         {
           "command": "ecode.switchEnvironment",
-          "when": "view == ecodeExplorer && !ecodeExplorer.busy",
+          "when": "view == ecodeLocalExplorer",
           "group": "navigation@0"
         },
         {
-          "command": "ecode.refresh",
-          "when": "view == ecodeExplorer && !ecodeExplorer.busy",
+          "command": "ecode.local.refresh",
+          "when": "view == ecodeLocalExplorer",
           "group": "navigation@1"
         },
         {
           "command": "ecode.download",
-          "when": "view == ecodeExplorer && !ecodeExplorer.busy",
+          "when": "view == ecodeLocalExplorer && !ecodeExplorer.busy",
           "group": "navigation@2"
         },
         {
           "command": "ecode.openSettings",
-          "when": "view == ecodeExplorer && !ecodeExplorer.busy",
+          "when": "view == ecodeLocalExplorer",
           "group": "navigation@3"
+        },
+        {
+          "command": "ecode.refresh",
+          "when": "view == ecodeExplorer && !ecodeExplorer.busy",
+          "group": "navigation@0"
         }
       ],
       "view/item/context": [
@@ -237,7 +326,7 @@
         },
         {
           "command": "ecode.compareWithRemote",
-          "when": "view == ecodeExplorer && viewItem =~ /canCompare/",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanCompareRemote/",
           "group": "inline@1"
         },
         {
@@ -308,6 +397,86 @@
         {
           "command": "ecode.deleteItem",
           "when": "view == ecodeExplorer && viewItem =~ /canDelete/",
+          "group": "modify@1"
+        },
+        {
+          "command": "ecode.local.openFile",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localFile/",
+          "group": "inline@0"
+        },
+        {
+          "command": "ecode.local.refresh",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localFolder/",
+          "group": "navigation@0"
+        },
+        {
+          "command": "ecode.local.createNewApp",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanCreateApp/",
+          "group": "new@0"
+        },
+        {
+          "command": "ecode.local.createNewType",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanCreateType/",
+          "group": "new@1"
+        },
+        {
+          "command": "ecode.local.createNewFolder",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanCreateChild/",
+          "group": "new@2"
+        },
+        {
+          "command": "ecode.local.createNewJs",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanCreateChild/",
+          "group": "new@3"
+        },
+        {
+          "command": "ecode.local.createNewCss",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanCreateChild/",
+          "group": "new@4"
+        },
+        {
+          "command": "ecode.local.createNewMd",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanCreateChild/",
+          "group": "new@5"
+        },
+        {
+          "command": "ecode.local.uploadResource",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanUploadResource/",
+          "group": "new@6"
+        },
+        {
+          "command": "ecode.local.release",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanRelease/",
+          "group": "release@0"
+        },
+        {
+          "command": "ecode.local.cancelRelease",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanCancelRelease/",
+          "group": "release@1"
+        },
+        {
+          "command": "ecode.local.setPreload",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanSetPreload/",
+          "group": "preload@0"
+        },
+        {
+          "command": "ecode.local.cancelPreload",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanCancelPreload/",
+          "group": "preload@1"
+        },
+        {
+          "command": "ecode.local.setPreloadOrder",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localApp/",
+          "group": "preload@2"
+        },
+        {
+          "command": "ecode.local.renameItem",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanRename/",
+          "group": "modify@0"
+        },
+        {
+          "command": "ecode.local.deleteItem",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanDelete/",
           "group": "modify@1"
         }
       ]
