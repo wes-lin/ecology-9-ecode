@@ -20,6 +20,13 @@ Open VS Code settings and search for `ecode`:
 | `ecode.password` | `''`               | Login password           |
 | `ecode.localDir` | `src`              | Local download directory |
 
+Downloaded files are stored under `<localDir>/src`. App metadata is stored under
+`<localDir>/.ecode`:
+
+- `ecode-apps.json` is regenerated from the remote tree on every download.
+- `ecode-apps.local.json` stores only project-specific fields that differ from
+  `ecode-apps.json`. Matching overrides are removed automatically.
+
 ## Commands
 
 - `eCode: Refresh Explorer` — reload the tree.

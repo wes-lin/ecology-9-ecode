@@ -1,0 +1,125 @@
+name: Release
+
+run-name: Release ${{ inputs.target }} by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        type: choice
+        required: true
+        description: Package to release
+        default: all
+        options:
+          - all
+          - sdk
+          - plugin
+      prerelease:
+        type: boolean
+        required: false
+        description: Mark the plugin GitHub Release as a prerelease
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish-sdk:
+    name: Publish SDK to npm
+    if: ${{ inputs.target == 'all' || inputs.target == 'sdk' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test SDK
+        run: pnpm --filter ecode-sdk test
+
+      - name: Publish SDK
+        working-directory: packages/ecode-sdk
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.NODE_AUTH_TOKEN }}
+
+  release-plugin:
+    name: Publish plugin to GitHub Releases
+    if: ${{ inputs.target == 'all' || inputs.target == 'plugin' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Package plugin
+        run: pnpm --filter vscode-ecode package
+
+      - name: Resolve plugin release metadata
+        id: plugin
+        shell: bash
+        run: |
+          version="$(node -p "require('./packages/vscode-ecode/package.json').version")"
+          vsix_path="$(find packages/vscode-ecode/releases -maxdepth 1 -type f -name '*.vsix' -print -quit)"
+          if [[ -z "$vsix_path" ]]; then
+            echo "Plugin package was not generated." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=vscode-ecode-v$version" >> "$GITHUB_OUTPUT"
+          echo "vsix_path=$vsix_path" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IS_PRERELEASE: ${{ inputs.prerelease }}
+          RELEASE_TAG: ${{ steps.plugin.outputs.tag }}
+          PLUGIN_VERSION: ${{ steps.plugin.outputs.version }}
+          VSIX_PATH: ${{ steps.plugin.outputs.vsix_path }}
+        run: |
+          release_options=()
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            release_options+=(--prerelease)
+          fi
+          gh release create "$RELEASE_TAG" "$VSIX_PATH" \
+            --target "$GITHUB_SHA" \
+            --title "eCode Explorer v$PLUGIN_VERSION" \
+            --generate-notes \
+            "${release_options[@]}"

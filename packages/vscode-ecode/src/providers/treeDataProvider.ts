@@ -11,31 +11,14 @@ import {
   getEcodeEnvironmentError,
   getEnvironmentCookieFile,
 } from '../config/ecodeEnvironment';
-import { hashContent, SnapshotStore, type SnapshotEntry } from './snapshotStore';
 
 const mkdir = promisify(fs.mkdir);
 const writeFile = promisify(fs.writeFile);
-const readFile = promisify(fs.readFile);
-const unlink = promisify(fs.unlink);
 
 type DownloadNodes = {
   folders: EcodeNode[];
   files: EcodeNode[];
 };
-
-type DownloadStats = {
-  created: number;
-  updated: number;
-  unchanged: number;
-  skippedUpdates: number;
-  deleted: number;
-  skippedDeletes: number;
-  failed: number;
-};
-
-type DownloadFileResult = 'created' | 'updated' | 'unchanged' | 'skippedUpdates';
-
-type DeleteResult = 'deleted' | 'unchanged' | 'skippedDeletes';
 
 type EcodeAppConfig = {
   path: string;
@@ -46,6 +29,11 @@ type EcodeAppConfig = {
   resources: string[];
   configs: string[];
   debugMode?: 'y' | 'n';
+};
+
+type LocalEcodeAppConfig = Partial<Omit<EcodeAppConfig, 'appId' | 'path'>> & {
+  appId?: string;
+  path?: string;
 };
 
 function getErrorMessage(error: unknown): string {
@@ -64,7 +52,6 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
   private _onDidChangeTreeData = new vscode.EventEmitter<EcodeNode | undefined | null | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
   readonly storageRoot: string;
-  private snapshotStore: SnapshotStore | null = null;
   client: EcodeClient | null = null;
   rootItems: EcodeNode[] = [];
   private _busy = false;
@@ -91,7 +78,6 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     }
 
     this.client = null;
-    this.snapshotStore = null;
     this.rootItems = [];
     this._fileContents.clear();
     this._onDidChangeTreeData.fire();
@@ -203,7 +189,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
 
     await this._setBusy(true);
     try {
-      const stats = await vscode.window.withProgress(
+      const failed = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
           title: 'Downloading eCode source',
@@ -211,18 +197,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
         },
         async (progress) => {
           const nodes: DownloadNodes = { folders: [], files: [] };
-          const stats: DownloadStats = {
-            created: 0,
-            updated: 0,
-            unchanged: 0,
-            skippedUpdates: 0,
-            deleted: 0,
-            skippedDeletes: 0,
-            failed: 0,
-          };
-          const snapshotStore = this._getSnapshotStore();
           progress.report({ message: 'Scanning remote tree...' });
-          await snapshotStore.ensureLoaded();
           await this._collectDownloadNodes(undefined, nodes);
 
           for (const folder of nodes.folders) {
@@ -231,39 +206,36 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
 
           await this._writeAppConfig(nodes.folders, nodes.files);
 
-          const total = Math.max(nodes.files.length, 1);
-          const increment = 100 / total;
+          if (nodes.files.length === 0) {
+            progress.report({ increment: 100, message: 'No files found.' });
+            return 0;
+          }
+
+          const increment = 100 / nodes.files.length;
           let completed = 0;
+          let failed = 0;
           for (const file of nodes.files) {
             try {
-              const result = await this._downloadFileWithSnapshot(file);
-              stats[result] += 1;
+              await this._ensureLocalFileFromRemote(file, { overwrite: true });
             } catch (error) {
-              stats.failed += 1;
+              failed += 1;
               console.warn(`Download failed for ${file.remotePath}: ${getErrorMessage(error)}`);
             }
             completed += 1;
             progress.report({
               increment,
-              message: `Processed ${completed}/${nodes.files.length}, skipped ${stats.skippedUpdates}, failed ${stats.failed}: ${file.remotePath}`,
+              message: `Downloaded ${completed - failed}/${nodes.files.length}, failed ${failed}: ${file.remotePath}`,
             });
           }
 
-          await this._reconcileRemoteDeletes(nodes.files, stats);
-          await snapshotStore.save();
-          return stats;
+          return failed;
         }
       );
 
-      const skipped = stats.skippedUpdates + stats.skippedDeletes;
-      if (stats.failed > 0 || skipped > 0) {
-        vscode.window.showWarningMessage(
-          `eCode download completed: ${stats.created} created, ${stats.updated} updated, ${stats.deleted} deleted, ${skipped} skipped, ${stats.failed} failed.`
-        );
+      if (failed > 0) {
+        vscode.window.showWarningMessage(`eCode source download completed with ${failed} failed file(s).`);
       } else {
-        vscode.window.showInformationMessage(
-          `eCode download completed: ${stats.created} created, ${stats.updated} updated, ${stats.unchanged} unchanged, ${stats.deleted} deleted.`
-        );
+        vscode.window.showInformationMessage('eCode source download completed.');
       }
     } catch (error) {
       vscode.window.showErrorMessage(`Download failed: ${getErrorMessage(error)}`);
@@ -441,7 +413,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
   }
 
   async createNewApp(element: EcodeNode): Promise<void> {
-    if (element.businessType !== 'type') {
+    if (element.businessType !== 'type' && element.businessType !== 'project') {
       vscode.window.showWarningMessage('New app is only supported under type nodes.');
       return;
     }
@@ -552,7 +524,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     });
   }
 
-  async uploadResource(element: EcodeNode): Promise<void> {
+  async uploadResource(_element: EcodeNode): Promise<void> {
     const selected = await vscode.window.showOpenDialog({
       canSelectFiles: true,
       canSelectFolders: false,
@@ -668,7 +640,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
 
     if (element.type === 'folder') {
       values.push('canRefreshFolder');
-      if (element.businessType === 'type') {
+      if (element.businessType === 'type' || element.businessType === 'project') {
         values.push('canCreateNewApp', 'canCreateNewType');
       }
       if (element.attribute === 'resource') {
@@ -741,11 +713,9 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     if (updates.appPreStateOrder !== undefined) app.appPreStateOrder = updates.appPreStateOrder;
     this._onDidChangeTreeData.fire(app);
 
-    const targetPath = this._getAppConfigPath();
-    const apps = this._readAppConfig(targetPath).map((current) =>
-      current.appId === app.appId ? { ...current, ...updates } : current
+    await this._updateGeneratedAppConfigs((apps) =>
+      apps.map((current) => (current.appId === app.appId ? { ...current, ...updates } : current))
     );
-    await writeFile(targetPath, `${JSON.stringify(apps, null, 2)}\n`);
   }
 
   async _updatePreloadState(element: EcodeNode, enabled: boolean): Promise<void> {
@@ -755,16 +725,16 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     const parent = element.parent;
     if (!parent) return;
 
-    const targetPath = this._getAppConfigPath();
     const relativePath = element.remotePath.slice(parent.remotePath.length + 1);
-    const apps = this._readAppConfig(targetPath).map((current) => {
-      if (current.path !== parent.remotePath) return current;
-      const preStateFiles = enabled
-        ? [...current.preStateFiles, relativePath]
-        : current.preStateFiles.filter((file) => file !== relativePath);
-      return { ...current, preStateFiles: [...new Set(preStateFiles)] };
-    });
-    await writeFile(targetPath, `${JSON.stringify(apps, null, 2)}\n`);
+    await this._updateGeneratedAppConfigs((apps) =>
+      apps.map((current) => {
+        if (current.path !== parent.remotePath) return current;
+        const preStateFiles = enabled
+          ? [...current.preStateFiles, relativePath]
+          : current.preStateFiles.filter((file) => file !== relativePath);
+        return { ...current, preStateFiles: [...new Set(preStateFiles)] };
+      })
+    );
   }
 
   async _listRemoteChildren(element?: EcodeNode): Promise<EcodeNode[]> {
@@ -815,8 +785,73 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       .filter((folder) => folder.appId || folder.attribute === 'system')
       .map((folder) => this._toAppConfig(folder, files));
     const targetPath = this._getAppConfigPath();
+    const localTargetPath = this._getLocalAppConfigPath();
+    const content = `${JSON.stringify(apps, null, 2)}\n`;
     await mkdir(path.dirname(targetPath), { recursive: true });
+    await writeFile(targetPath, content);
+    if (!fs.existsSync(localTargetPath)) {
+      await writeFile(localTargetPath, '[]\n');
+    }
+    await this._reconcileLocalAppOverrides();
+  }
+
+  async _updateGeneratedAppConfigs(update: (apps: EcodeAppConfig[]) => EcodeAppConfig[]): Promise<void> {
+    const targetPath = this._getAppConfigPath();
+    await mkdir(path.dirname(targetPath), { recursive: true });
+    const apps = update(this._readAppConfig(targetPath));
     await writeFile(targetPath, `${JSON.stringify(apps, null, 2)}\n`);
+    await this._reconcileLocalAppOverrides();
+  }
+
+  async _reconcileLocalAppOverrides(): Promise<void> {
+    const localTargetPath = this._getLocalAppConfigPath();
+    if (!fs.existsSync(localTargetPath)) return;
+    const baseline = this._readAppConfig(this._getAppConfigPath());
+    const overrides = this._readLocalAppConfig()
+      .map((override) => {
+        const remote = baseline.find((candidate) =>
+          override.appId ? candidate.appId === override.appId : candidate.path === override.path
+        );
+        const next = { ...override };
+        this._removeMatchingLocalFields(next, remote);
+        return next;
+      })
+      .filter((override) => this._hasLocalOverrideFields(override));
+    await writeFile(localTargetPath, `${JSON.stringify(overrides, null, 2)}\n`);
+  }
+
+  _removeMatchingLocalFields(local: LocalEcodeAppConfig, remote?: EcodeAppConfig): void {
+    if (!remote) return;
+    for (const key of [
+      'appStatus',
+      'appPreStateOrder',
+      'preStateFiles',
+      'resources',
+      'configs',
+      'debugMode',
+    ] as const) {
+      if (local[key] !== undefined && JSON.stringify(local[key]) === JSON.stringify(remote[key])) {
+        delete local[key];
+      }
+    }
+  }
+
+  _hasLocalOverrideFields(config: LocalEcodeAppConfig): boolean {
+    return Object.keys(config).some((key) => key !== 'appId' && key !== 'path');
+  }
+
+  _readLocalAppConfig(): LocalEcodeAppConfig[] {
+    const targetPath = this._getLocalAppConfigPath();
+    if (!fs.existsSync(targetPath)) return [];
+    try {
+      const parsed = JSON.parse(fs.readFileSync(targetPath, 'utf8')) as LocalEcodeAppConfig[];
+      if (!Array.isArray(parsed)) {
+        throw new Error('Expected a JSON array.');
+      }
+      return parsed;
+    } catch (error) {
+      throw new Error(`Invalid local app overrides at ${targetPath}: ${getErrorMessage(error)}`);
+    }
   }
 
   _readAppConfig(targetPath: string): EcodeAppConfig[] {
@@ -880,85 +915,6 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     const content = await this._readRemoteContent(element);
     await writeFile(targetPath, normalizeContentForWrite(content));
     return targetPath;
-  }
-
-  async _downloadFileWithSnapshot(element: EcodeNode): Promise<DownloadFileResult> {
-    const targetPath = this._getLocalPath(element);
-    const remoteContent = await this._readRemoteContent(element);
-    const remoteHash = hashContent(remoteContent);
-    const snapshotStore = this._getSnapshotStore();
-    const snapshot = snapshotStore.get(element.remotePath);
-
-    if (!fs.existsSync(targetPath)) {
-      await this._writeRemoteContentToLocal(targetPath, remoteContent);
-      this._setSnapshot(element, targetPath, remoteHash);
-      return 'created';
-    }
-
-    const localContent = await readFile(targetPath);
-    const localHash = hashContent(localContent);
-    if (localHash === remoteHash) {
-      this._setSnapshot(element, targetPath, remoteHash);
-      return 'unchanged';
-    }
-
-    if (snapshot && localHash === snapshot.contentHash) {
-      await this._writeRemoteContentToLocal(targetPath, remoteContent);
-      this._setSnapshot(element, targetPath, remoteHash);
-      return 'updated';
-    }
-
-    return 'skippedUpdates';
-  }
-
-  async _reconcileRemoteDeletes(files: EcodeNode[], stats: DownloadStats): Promise<void> {
-    const remotePaths = new Set(files.map((file) => normalizeRemotePath(file.remotePath)));
-    const snapshotStore = this._getSnapshotStore();
-    for (const snapshot of snapshotStore.list()) {
-      if (remotePaths.has(snapshot.remotePath)) continue;
-      const result = await this._handleDeletedRemoteSnapshot(snapshot);
-      stats[result] += 1;
-    }
-  }
-
-  async _handleDeletedRemoteSnapshot(snapshot: SnapshotEntry): Promise<DeleteResult> {
-    const localPath = this._resolveSnapshotLocalPath(snapshot);
-    if (!fs.existsSync(localPath)) {
-      this._getSnapshotStore().delete(snapshot.remotePath);
-      return 'unchanged';
-    }
-
-    const localHash = hashContent(await readFile(localPath));
-    if (localHash === snapshot.contentHash) {
-      await unlink(localPath);
-      this._getSnapshotStore().delete(snapshot.remotePath);
-      return 'deleted';
-    }
-
-    return 'skippedDeletes';
-  }
-
-  async _writeRemoteContentToLocal(targetPath: string, content: string | Buffer): Promise<void> {
-    await mkdir(path.dirname(targetPath), { recursive: true });
-    await writeFile(targetPath, normalizeContentForWrite(content));
-  }
-
-  _setSnapshot(element: EcodeNode, localPath: string, contentHash: string): void {
-    this._getSnapshotStore().set({
-      remotePath: element.remotePath,
-      localPath: this._getSnapshotLocalPath(localPath),
-      contentHash,
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  _getSnapshotLocalPath(localPath: string): string {
-    return path.relative(this._getLocalRootPath(), localPath).replace(/\\/g, '/');
-  }
-
-  _resolveSnapshotLocalPath(snapshot: SnapshotEntry): string {
-    if (path.isAbsolute(snapshot.localPath)) return snapshot.localPath;
-    return path.resolve(this._getLocalRootPath(), snapshot.localPath);
   }
 
   async _readRemoteContent(element: EcodeNode): Promise<string | Buffer> {
@@ -1031,15 +987,8 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     return path.join(this._getEnvironmentRootPath(), '.ecode', 'ecode-apps.json');
   }
 
-  _getSnapshotFilePath(): string {
-    return path.join(this._getEnvironmentRootPath(), '.ecode', 'snapshots.json');
-  }
-
-  _getSnapshotStore(): SnapshotStore {
-    if (!this.snapshotStore) {
-      this.snapshotStore = new SnapshotStore(() => this._getSnapshotFilePath());
-    }
-    return this.snapshotStore;
+  _getLocalAppConfigPath(): string {
+    return path.join(this._getEnvironmentRootPath(), '.ecode', 'ecode-apps.local.json');
   }
 
   _getClient(): EcodeClient {

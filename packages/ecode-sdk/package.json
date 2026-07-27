@@ -4,9 +4,19 @@
   "description": "TypeScript SDK for Ecology 9 ecode APIs",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "!__tests__"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "pnpm run build && node --test test/**/*.test.js"
+  },
+  "author": "wes lin",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wes-lin/ecology-9-ecode.git"
   },
   "license": "ISC",
   "dependencies": {
