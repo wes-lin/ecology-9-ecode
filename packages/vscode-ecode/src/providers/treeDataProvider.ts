@@ -141,11 +141,14 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
       return false;
     }
 
-    await this._setBusy(true);
+    let outcome: Awaited<ReturnType<EcodeClient['download']>> | undefined;
+    let downloadError: unknown;
+    let conflicts = 0;
+
     try {
+      await this._setBusy(true);
       const client = this._getClient();
-      let conflicts = 0;
-      const outcome = await vscode.window.withProgress(
+      outcome = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
           title: 'Downloading eCode source',
@@ -186,38 +189,42 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
           });
         }
       );
-
-      if (outcome.failures.length > 0) {
-        this._output.appendLine(`[${new Date().toISOString()}] eCode file download failures`);
-        for (const failure of outcome.failures) {
-          this._output.appendLine(`- ${failure.relativePath}: ${failure.message}`);
-        }
-        this._output.appendLine('');
-      }
-
-      const summary = `${outcome.downloaded} new file(s), ${outcome.skipped} existing file(s) kept`;
-      if (outcome.failed > 0 || conflicts > 0) {
-        const details = [
-          outcome.failed > 0 ? `${outcome.failed} file download failure(s)` : '',
-          conflicts > 0 ? `${conflicts} tree conflict(s); local changes kept` : '',
-        ]
-          .filter(Boolean)
-          .join(', ');
-        const message = `eCode download completed: ${summary}; ${details}.`;
-        const action = await vscode.window.showWarningMessage(message, 'Show Details');
-        if (action === 'Show Details') {
-          this._output.show(true);
-        }
-      } else {
-        vscode.window.showInformationMessage(`eCode download completed: ${summary}.`);
-      }
-      return true;
     } catch (error) {
-      vscode.window.showErrorMessage(`Download failed: ${getErrorMessage(error)}`);
-      return false;
+      downloadError = error;
     } finally {
       await this._setBusy(false);
     }
+
+    if (downloadError !== undefined || !outcome) {
+      vscode.window.showErrorMessage(`Download failed: ${getErrorMessage(downloadError)}`);
+      return false;
+    }
+
+    if (outcome.failures.length > 0) {
+      this._output.appendLine(`[${new Date().toISOString()}] eCode file download failures`);
+      for (const failure of outcome.failures) {
+        this._output.appendLine(`- ${failure.relativePath}: ${failure.message}`);
+      }
+      this._output.appendLine('');
+    }
+
+    const summary = `${outcome.downloaded} new file(s), ${outcome.skipped} existing file(s) kept`;
+    if (outcome.failed > 0 || conflicts > 0) {
+      const details = [
+        outcome.failed > 0 ? `${outcome.failed} file download failure(s)` : '',
+        conflicts > 0 ? `${conflicts} tree conflict(s); local changes kept` : '',
+      ]
+        .filter(Boolean)
+        .join(', ');
+      const message = `eCode download completed: ${summary}; ${details}.`;
+      const action = await vscode.window.showWarningMessage(message, 'Show Details');
+      if (action === 'Show Details') {
+        this._output.show(true);
+      }
+    } else {
+      vscode.window.showInformationMessage(`eCode download completed: ${summary}.`);
+    }
+    return true;
   }
 
   async viewFile(element: EcodeNode): Promise<void> {
