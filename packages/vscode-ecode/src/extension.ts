@@ -62,10 +62,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('ecode.download', async () => {
-      const downloaded = await treeDataProvider.download();
-      if (!downloaded) return;
-      await localTreeDataProvider.initializeFromRemote(treeDataProvider.rootItems);
-      await localTreeDataProvider.refresh();
+      await treeDataProvider.download((roots) => localTreeDataProvider.syncFromRemote(roots));
     })
   );
 
@@ -219,7 +216,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   const localMetadataWatcher = vscode.workspace.createFileSystemWatcher(
-    '**/.ecode/{ecode-apps.json,ecode-tree.local.json}'
+    '**/.ecode/{ecode-tree.json,ecode-tree.local.json}'
   );
   context.subscriptions.push(
     localMetadataWatcher,

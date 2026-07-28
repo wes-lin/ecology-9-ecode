@@ -1,10 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { RemoteTreeItem } from 'ecode-sdk';
+import type { EcodeTreeItem } from 'ecode-sdk';
 
-export type EcodeLocalTreeItem = RemoteTreeItem & {
-  children?: EcodeLocalTreeItem[];
-};
+export type EcodeLocalTreeItem = EcodeTreeItem;
 
 export async function readLocalTreeFile(targetPath: string): Promise<EcodeLocalTreeItem[] | undefined> {
   if (!fs.existsSync(targetPath)) return undefined;

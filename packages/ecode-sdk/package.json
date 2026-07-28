@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "pnpm run build && node --test test/**/*.test.js"
+    "test": "pnpm run build && node --test test/client.test.js test/downloader.test.js"
   },
   "author": "wes lin",
   "repository": {
@@ -20,9 +20,9 @@
   },
   "license": "ISC",
   "dependencies": {
+    "@babel/standalone": "7.5.5",
     "form-data": "^4.0.0"
   },
-  "devDependencies": {},
   "engines": {
     "node": ">=18.0.0"
   }
