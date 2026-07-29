@@ -1,5 +1,6 @@
 declare module '@babel/standalone' {
   type SourceType = 'script' | 'module' | 'unambiguous';
+  type PluginItem = string | [string, Record<string, unknown>];
 
   type TransformOptions = {
     filename?: string;
@@ -9,7 +10,7 @@ declare module '@babel/standalone' {
     minified?: boolean;
     retainLines?: boolean;
     sourceMaps?: boolean;
-    plugins?: string[];
+    plugins?: PluginItem[];
     presets?: string[];
   };
 

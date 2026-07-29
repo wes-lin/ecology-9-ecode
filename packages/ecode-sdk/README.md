@@ -74,10 +74,12 @@ const fileCode = await compileJavaScriptFile(path.resolve('index.test.js'));
 // Returns the compiled content without writing an output file.
 ```
 
-The compiler uses the legacy `es2015`, `react`, and `transform-instanceof`
-configuration. Pass `sourceType`, `comments`, `compact`, `minified`, or
-`retainLines` to override output options. Project Babel configuration files do
-not affect the standalone compiler, so output stays deterministic.
+The compiler uses the legacy `es2015`, `react`, decorators, class-properties,
+and `transform-instanceof` configuration. Decorators use legacy mode, including
+decorated class properties. Pass `sourceType`, `comments`, `compact`,
+`minified`, or `retainLines` to override output options. Project Babel
+configuration files do not affect the standalone compiler, so output stays
+deterministic.
 
 ## Notes
 

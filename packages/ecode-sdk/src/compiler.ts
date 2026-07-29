@@ -30,7 +30,11 @@ export function compileJavaScript(source: string, options: EcodeJavaScriptCompil
     minified: options.minified ?? false,
     retainLines: options.retainLines ?? false,
     sourceMaps: false,
-    plugins: ['transform-instanceof'],
+    plugins: [
+      ['proposal-decorators', { legacy: true }],
+      ['proposal-class-properties', { loose: true }],
+      'transform-instanceof',
+    ],
     presets: ['es2015', 'react'],
   });
 
