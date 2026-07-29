@@ -3,6 +3,7 @@ import { getActiveEcodeEnvironment, getEcodeEnvironments } from './config/ecodeE
 import { EcodeNode } from './providers/ecodeNode';
 import { LocalTreeDataProvider } from './providers/localTreeDataProvider';
 import { EcodeTreeDataProvider } from './providers/treeDataProvider';
+import { getErrorMessage } from './utils/errors';
 
 export function activate(context: vscode.ExtensionContext): void {
   const treeDataProvider = new EcodeTreeDataProvider(context.globalStorageUri.fsPath);
@@ -15,12 +16,17 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: localTreeDataProvider,
     showCollapseAll: true,
   });
+  const refreshLocalTree = (uri?: vscode.Uri): void => {
+    localTreeDataProvider.reloadFromTree(uri?.fsPath).catch((error) => {
+      vscode.window.showErrorMessage(`Refresh local eCode metadata failed: ${getErrorMessage(error)}`);
+    });
+  };
   vscode.commands.executeCommand('setContext', 'ecodeExplorer.busy', false);
 
   context.subscriptions.push(remoteTreeView, localTreeView, treeDataProvider, localTreeDataProvider);
   context.subscriptions.push(vscode.commands.registerCommand('ecode.refresh', () => treeDataProvider.refresh()));
   context.subscriptions.push(
-    vscode.commands.registerCommand('ecode.local.refresh', () => localTreeDataProvider.refresh())
+    vscode.commands.registerCommand('ecode.local.refresh', () => localTreeDataProvider.reloadFromTree())
   );
 
   context.subscriptions.push(
@@ -62,7 +68,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('ecode.download', async () => {
-      await treeDataProvider.download((roots) => localTreeDataProvider.syncFromRemote(roots));
+      const downloaded = await treeDataProvider.download();
+      if (downloaded) await localTreeDataProvider.reloadFromTree();
     })
   );
 
@@ -210,20 +217,19 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('ecode.environments') || event.affectsConfiguration('ecode.activeEnvironment')) {
         treeDataProvider.refresh();
-        localTreeDataProvider.refresh();
+        refreshLocalTree();
       }
     })
   );
 
-  const localMetadataWatcher = vscode.workspace.createFileSystemWatcher(
-    '**/.ecode/{ecode-tree.json,ecode-tree.local.json}'
-  );
+  const localMetadataWatcher = vscode.workspace.createFileSystemWatcher('**/.ecode/ecode-tree.json');
   context.subscriptions.push(
     localMetadataWatcher,
-    localMetadataWatcher.onDidCreate(() => localTreeDataProvider.refresh()),
-    localMetadataWatcher.onDidChange(() => localTreeDataProvider.refresh()),
-    localMetadataWatcher.onDidDelete(() => localTreeDataProvider.refresh())
+    localMetadataWatcher.onDidCreate(refreshLocalTree),
+    localMetadataWatcher.onDidChange(refreshLocalTree),
+    localMetadataWatcher.onDidDelete(refreshLocalTree)
   );
+  refreshLocalTree();
 }
 
 export function deactivate(): void {

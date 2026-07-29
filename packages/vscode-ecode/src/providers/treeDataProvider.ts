@@ -1,29 +1,18 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { EcodeClient, EcodeLogger, type EcodeTreeItem } from 'ecode-sdk';
+import { EcodeClient, EcodeLogger } from 'ecode-sdk';
 import { EcodeNode } from './ecodeNode';
 import { EcodeFileSystemProvider } from './fileSystemProvider';
-import { normalizeRemotePath } from '../utils/pathUtils';
+import { getErrorMessage } from '../utils/errors';
+import { getSafeRelativeTreePath, resolveTreePath } from '../utils/pathUtils';
 import {
   getActiveEcodeEnvironment,
+  getActiveEcodeEnvironmentRoot,
   getEcodeEnvironmentError,
   getEnvironmentCookieFile,
 } from '../config/ecodeEnvironment';
 import { BaseEcodeTreeDataProvider, type EcodeTreeItemPresentation } from './baseTreeDataProvider';
-
-type PreparedLocalDownload = {
-  files: EcodeNode[];
-  conflicts: readonly {
-    path: string;
-    reason: string;
-    fields?: readonly string[];
-  }[];
-};
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function toBytes(content: string | Buffer): Uint8Array {
   return Buffer.isBuffer(content) ? content : Buffer.from(String(content), 'utf8');
@@ -135,7 +124,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     return children;
   }
 
-  async download(prepareLocalTree: (roots: EcodeTreeItem[]) => Promise<PreparedLocalDownload>): Promise<boolean> {
+  async download(): Promise<boolean> {
     if (this._busy) {
       vscode.window.showWarningMessage('eCode download is already running.');
       return false;
@@ -143,7 +132,6 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
 
     let outcome: Awaited<ReturnType<EcodeClient['download']>> | undefined;
     let downloadError: unknown;
-    let conflicts = 0;
 
     try {
       await this._setBusy(true);
@@ -156,23 +144,6 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
         },
         async (progress) => {
           return client.download(this._getEnvironmentRootPath(), {
-            prepareTree: async (tree) => {
-              progress.report({ message: 'Merging remote and local trees...' });
-              this.rootItems = this._mapTreeItems(tree, '');
-              const prepared = await prepareLocalTree(tree);
-              conflicts = prepared.conflicts.length;
-              if (conflicts > 0) {
-                this._output.appendLine(`[${new Date().toISOString()}] Local tree merge conflicts`);
-                for (const conflict of prepared.conflicts) {
-                  const fields = conflict.fields?.length ? ` (${conflict.fields.join(', ')})` : '';
-                  this._output.appendLine(`- ${conflict.path}: ${conflict.reason}${fields}`);
-                }
-                this._output.appendLine('');
-              }
-              return {
-                filePaths: prepared.files.map((file) => file.remotePath),
-              };
-            },
             onProgress: (state) => {
               if (state.phase === 'tree') {
                 progress.report({ message: 'Scanning remote tree...' });
@@ -200,6 +171,9 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
       return false;
     }
 
+    this.rootItems = this._mapTreeItems(outcome.tree, '');
+    this._onDidChangeTreeData.fire();
+
     if (outcome.failures.length > 0) {
       this._output.appendLine(`[${new Date().toISOString()}] eCode file download failures`);
       for (const failure of outcome.failures) {
@@ -209,14 +183,8 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     }
 
     const summary = `${outcome.downloaded} new file(s), ${outcome.skipped} existing file(s) kept`;
-    if (outcome.failed > 0 || conflicts > 0) {
-      const details = [
-        outcome.failed > 0 ? `${outcome.failed} file download failure(s)` : '',
-        conflicts > 0 ? `${conflicts} tree conflict(s); local changes kept` : '',
-      ]
-        .filter(Boolean)
-        .join(', ');
-      const message = `eCode download completed: ${summary}; ${details}.`;
+    if (outcome.failed > 0) {
+      const message = `eCode download completed: ${summary}; ${outcome.failed} file download failure(s).`;
       const action = await vscode.window.showWarningMessage(message, 'Show Details');
       if (action === 'Show Details') {
         this._output.show(true);
@@ -644,20 +612,8 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     return client.viewFile(element.id ?? '');
   }
 
-  _getWorkspaceFolderPath(): string {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!workspaceFolder) {
-      throw new Error('No workspace folder open.');
-    }
-    return workspaceFolder;
-  }
-
   _getEnvironmentRootPath(): string {
-    const environment = this._getActiveEnvironment();
-    if (!environment) {
-      throw new Error('No eCode environment configured.');
-    }
-    return path.resolve(this._getWorkspaceFolderPath(), environment.localDir);
+    return getActiveEcodeEnvironmentRoot(this._getConfig());
   }
 
   _getLocalRootPath(): string {
@@ -665,29 +621,11 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
   }
 
   _getSafeRelativeRemotePath(remotePath: string): string {
-    const normalized = path.normalize(normalizeRemotePath(String(remotePath || '')));
-    if (
-      !normalized ||
-      path.isAbsolute(normalized) ||
-      /^[a-zA-Z]:/.test(normalized) ||
-      normalized === '..' ||
-      normalized.startsWith(`..${path.sep}`)
-    ) {
-      throw new Error(`Invalid remote path: ${remotePath}`);
-    }
-    return normalized;
+    return getSafeRelativeTreePath(remotePath, 'remote path');
   }
 
   _getLocalPath(element: EcodeNode): string {
-    const localRoot = this._getLocalRootPath();
-    const relativePath = this._getSafeRelativeRemotePath(element.remotePath);
-    const targetPath = path.resolve(localRoot, relativePath);
-    const normalizedRoot = path.resolve(localRoot).toLowerCase();
-    const normalizedTarget = targetPath.toLowerCase();
-    if (normalizedTarget !== normalizedRoot && !normalizedTarget.startsWith(`${normalizedRoot}${path.sep}`)) {
-      throw new Error(`Invalid remote path: ${element.remotePath}`);
-    }
-    return targetPath;
+    return resolveTreePath(this._getLocalRootPath(), element.remotePath, 'remote path');
   }
 
   _getConfig(): vscode.WorkspaceConfiguration {

@@ -1,36 +1,48 @@
-import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { getActiveEcodeEnvironment } from '../config/ecodeEnvironment';
+import { synchronizeEcodeAppConfigs } from 'ecode-sdk';
+import { getActiveEcodeEnvironmentRoot } from '../config/ecodeEnvironment';
 import { readLocalTreeFile, writeLocalTreeFile, type EcodeLocalTreeItem } from '../config/ecodeLocalTree';
-import { mergeEcodeTrees, type EcodeTreeConflict } from '../config/ecodeTreeMerge';
+import { getErrorMessage } from '../utils/errors';
+import { createLocalNodeId, isLocalNodeId } from '../utils/localNodeId';
+import { normalizeTreePath, resolveTreePath } from '../utils/pathUtils';
 import { BaseEcodeTreeDataProvider, type EcodeTreeItemPresentation } from './baseTreeDataProvider';
 import { EcodeNode } from './ecodeNode';
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function normalizeTreePath(value: string): string {
-  return value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-}
-
-export type LocalTreeSyncResult = {
-  files: EcodeNode[];
-  conflicts: EcodeTreeConflict[];
-};
 
 export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
   private _roots: EcodeNode[] = [];
   private _loaded = false;
-  private _remoteNodeIds = new Set<string>();
+  private _reloadQueue: Promise<void> = Promise.resolve();
 
   async refresh(): Promise<void> {
     this._loaded = false;
     this._roots = [];
-    this._remoteNodeIds.clear();
     this._onDidChangeTreeData.fire();
+  }
+
+  async reloadFromTree(changedTreePath?: string): Promise<void> {
+    this._reloadQueue = this._reloadQueue
+      .catch(() => undefined)
+      .then(async () => {
+        let treePath: string;
+        try {
+          treePath = this._getTreePath();
+        } catch {
+          await this.refresh();
+          return;
+        }
+
+        if (changedTreePath && !this._isSamePath(treePath, changedTreePath)) return;
+
+        await synchronizeEcodeAppConfigs(treePath);
+        this._loaded = false;
+        this._roots = [];
+        await this._ensureLoaded();
+        await this._materializeFolders(this._roots);
+        this._onDidChangeTreeData.fire();
+      });
+    return this._reloadQueue;
   }
 
   protected _getTreeItemPresentation(element: EcodeNode): EcodeTreeItemPresentation {
@@ -75,7 +87,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     const name = await this._promptForName({ title: 'Create Local App', kind: 'app' });
     if (!name) return;
 
-    const appId = `local:${randomUUID()}`;
+    const appId = createLocalNodeId();
     const appPath = this._childPath(parent, name);
     const item: EcodeLocalTreeItem = {
       id: appId,
@@ -101,7 +113,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     await this._createFolderAndNode(
       parent,
       {
-        id: `local:${randomUUID()}`,
+        id: createLocalNodeId(),
         name,
         treeType: 'folder',
         businessType: 'type',
@@ -121,7 +133,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     await this._createFolderAndNode(
       parent,
       {
-        id: `local:${randomUUID()}`,
+        id: createLocalNodeId(),
         name,
         treeType: 'folder',
         hasChild: true,
@@ -146,7 +158,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, '', 'utf8');
     await this._appendChild(parent.id, {
-      id: `local:${randomUUID()}`,
+      id: createLocalNodeId(),
       name,
       treeType: 'file',
       fileExtension: extension,
@@ -174,7 +186,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     if (fs.existsSync(target.fsPath)) throw new Error(`"${name}" already exists.`);
     await vscode.workspace.fs.copy(source, target, { overwrite: false });
     await this._appendChild(parent.id, {
-      id: `local:${randomUUID()}`,
+      id: createLocalNodeId(),
       name,
       treeType: 'file',
       fileExtension: path.extname(name).replace(/^\./, ''),
@@ -204,7 +216,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     const item = this._findItem(tree, element.id);
     if (!item) throw new Error('The local tree node no longer exists.');
     item.name = name;
-    await writeLocalTreeFile(this._getTreePath(), tree);
+    await this._writeTree(tree);
     await this.refresh();
   }
 
@@ -224,7 +236,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
 
     const tree = await this._readTreeRequired();
     this._removeItem(tree, element.id);
-    await writeLocalTreeFile(this._getTreePath(), tree);
+    await this._writeTree(tree);
     await this.refresh();
   }
 
@@ -261,31 +273,9 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     await this._setFilePreload(element, false);
   }
 
-  async syncFromRemote(remoteItems: EcodeLocalTreeItem[]): Promise<LocalTreeSyncResult> {
-    const localItems = await readLocalTreeFile(this._getTreePath());
-    const baselineItems = await readLocalTreeFile(this._getRemoteTreePath());
-    const mergeResult = localItems
-      ? mergeEcodeTrees(baselineItems || [], localItems, remoteItems)
-      : { items: remoteItems, conflicts: [] };
-
-    await writeLocalTreeFile(this._getTreePath(), mergeResult.items);
-    this._remoteNodeIds = this._collectNodeIds(remoteItems);
-    this._roots = this._mapTreeItems(mergeResult.items);
-    this._loaded = true;
-    await this._materializeFolders(this._roots);
-    this._onDidChangeTreeData.fire();
-
-    return {
-      files: this._collectRemoteFiles(this._roots),
-      conflicts: mergeResult.conflicts,
-    };
-  }
-
   private async _ensureLoaded(): Promise<void> {
     if (this._loaded) return;
     const items = (await readLocalTreeFile(this._getTreePath())) || [];
-    const remoteItems = (await readLocalTreeFile(this._getRemoteTreePath())) || [];
-    this._remoteNodeIds = this._collectNodeIds(remoteItems);
     this._roots = this._mapTreeItems(items);
     this._loaded = true;
   }
@@ -307,11 +297,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
       }
     } else if (element.type === 'file') {
       values.push('localFile');
-      if (
-        element.id &&
-        !element.id.startsWith('local:') &&
-        (this._remoteNodeIds.size === 0 || this._remoteNodeIds.has(element.id))
-      ) {
+      if (element.id && !isLocalNodeId(element.id)) {
         values.push('localCanCompareRemote');
       }
       if (this._findContainingAppNode(element)) {
@@ -332,7 +318,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     const item = this._findItem(tree, element.id);
     if (!item) throw new Error('The local tree node no longer exists.');
     item.state = enabled ? 'pre-state' : '';
-    await writeLocalTreeFile(this._getTreePath(), tree);
+    await this._writeTree(tree);
     await this.refresh();
   }
 
@@ -345,7 +331,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     const item = this._findItem(tree, element.id);
     if (!item) throw new Error('The local tree node no longer exists.');
     Object.assign(item, updates);
-    await writeLocalTreeFile(this._getTreePath(), tree);
+    await this._writeTree(tree);
   }
 
   private async _createFolderAndNode(parent: EcodeNode, item: EcodeLocalTreeItem, targetPath: string): Promise<void> {
@@ -362,7 +348,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     if (!parent) throw new Error('The parent node no longer exists.');
     parent.children = [...(parent.children || []), child];
     parent.hasChild = true;
-    await writeLocalTreeFile(this._getTreePath(), tree);
+    await this._writeTree(tree);
   }
 
   private _findItem(items: EcodeLocalTreeItem[], id: string | undefined): EcodeLocalTreeItem | undefined {
@@ -384,30 +370,6 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     return items.some((item) => this._removeItem(item.children || [], id));
   }
 
-  private _collectNodeIds(items: EcodeLocalTreeItem[]): Set<string> {
-    const ids = new Set<string>();
-    const visit = (nodes: EcodeLocalTreeItem[]): void => {
-      for (const node of nodes) {
-        if (node.id) ids.add(node.id);
-        visit(node.children || []);
-      }
-    };
-    visit(items);
-    return ids;
-  }
-
-  private _collectRemoteFiles(nodes: EcodeNode[]): EcodeNode[] {
-    const files: EcodeNode[] = [];
-    const visit = (items: EcodeNode[]): void => {
-      for (const item of items) {
-        if (item.type === 'file' && item.id && this._remoteNodeIds.has(item.id)) files.push(item);
-        visit(item.children || []);
-      }
-    };
-    visit(nodes);
-    return files;
-  }
-
   private async _materializeFolders(nodes: EcodeNode[]): Promise<void> {
     const visit = async (items: EcodeNode[]): Promise<void> => {
       for (const item of items) {
@@ -422,16 +384,18 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
 
   private async _readTreeRequired(): Promise<EcodeLocalTreeItem[]> {
     const tree = await readLocalTreeFile(this._getTreePath());
-    if (!tree) throw new Error('Run Download in the Local view to generate ecode-tree.local.json first.');
+    if (!tree) throw new Error('Run Download in the Local view to generate ecode-tree.json first.');
     return tree;
   }
 
+  private async _writeTree(tree: EcodeLocalTreeItem[]): Promise<void> {
+    const treePath = this._getTreePath();
+    await writeLocalTreeFile(treePath, tree);
+    await synchronizeEcodeAppConfigs(treePath);
+  }
+
   private _getEnvironmentRoot(): string {
-    const workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!workspace) throw new Error('No workspace folder open.');
-    const environment = getActiveEcodeEnvironment(vscode.workspace.getConfiguration('ecode'));
-    if (!environment) throw new Error('No eCode environment configured.');
-    return path.resolve(workspace, environment.localDir);
+    return getActiveEcodeEnvironmentRoot(vscode.workspace.getConfiguration('ecode'));
   }
 
   private _getSourceRoot(): string {
@@ -439,20 +403,18 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
   }
 
   private _getTreePath(): string {
-    return path.join(this._getEnvironmentRoot(), '.ecode', 'ecode-tree.local.json');
-  }
-
-  private _getRemoteTreePath(): string {
     return path.join(this._getEnvironmentRoot(), '.ecode', 'ecode-tree.json');
   }
 
+  private _isSamePath(left: string, right: string): boolean {
+    const resolvedLeft = path.resolve(left);
+    const resolvedRight = path.resolve(right);
+    return process.platform === 'win32'
+      ? resolvedLeft.toLowerCase() === resolvedRight.toLowerCase()
+      : resolvedLeft === resolvedRight;
+  }
+
   private _getLocalPath(relativePath: string): string {
-    const root = path.resolve(this._getSourceRoot());
-    const target = path.resolve(root, normalizeTreePath(relativePath).replace(/\//g, path.sep));
-    const relative = path.relative(root, target);
-    if (path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
-      throw new Error(`Invalid local eCode path: ${relativePath}`);
-    }
-    return target;
+    return resolveTreePath(this._getSourceRoot(), relativePath, 'local eCode path');
   }
 }

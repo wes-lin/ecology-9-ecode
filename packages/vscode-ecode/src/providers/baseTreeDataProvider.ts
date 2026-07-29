@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import type { EcodeTreeItem } from 'ecode-sdk';
+import { getEcodeAppId, type EcodeTreeItem } from 'ecode-sdk';
+import { normalizeTreePath } from '../utils/pathUtils';
 import { EcodeNode } from './ecodeNode';
 
 export type EcodeTreeItemPresentation = {
@@ -15,10 +16,6 @@ export type EcodeNodeNamePromptOptions = {
   value?: string;
   extension?: string;
 };
-
-function normalizeTreePath(value: string): string {
-  return value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-}
 
 export abstract class BaseEcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>, vscode.Disposable {
   protected readonly _onDidChangeTreeData = new vscode.EventEmitter<EcodeNode | undefined | null | void>();
@@ -83,7 +80,7 @@ export abstract class BaseEcodeTreeDataProvider implements vscode.TreeDataProvid
       remotePath,
       route: item.route || '',
       hasChild: Boolean(item.children?.length || item.hasChild),
-      appId: item.initialAppId || (item.attribute === 'system' ? item.id : '') || '',
+      appId: getEcodeAppId(item),
       attribute: item.attribute || '',
       deletable: !['system', 'jar', 'config', 'resource', 'non-code'].includes(item.attribute || ''),
       state: item.state || '',

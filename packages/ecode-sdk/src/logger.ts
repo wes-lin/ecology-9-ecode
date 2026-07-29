@@ -163,11 +163,7 @@ export class EcodeLogger implements EcodeLoggerLike {
    */
   _redactHeaders<T extends Record<string, unknown> | undefined>(headers: T): T | Record<string, unknown> {
     if (!headers || !this.redact) return headers;
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(headers)) {
-      result[key] = SENSITIVE_KEYS.has(key.toLowerCase()) ? '[REDACTED]' : value;
-    }
-    return result;
+    return this._redactRecord(headers);
   }
 
   /**
@@ -177,8 +173,12 @@ export class EcodeLogger implements EcodeLoggerLike {
    */
   _redactBody(body: unknown): unknown {
     if (!body || !this.redact || typeof body !== 'object') return body;
+    return this._redactRecord(body as Record<string, unknown>);
+  }
+
+  _redactRecord(record: Record<string, unknown>): Record<string, unknown> {
     const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(body)) {
+    for (const [key, value] of Object.entries(record)) {
       result[key] = SENSITIVE_KEYS.has(key.toLowerCase()) ? '[REDACTED]' : value;
     }
     return result;

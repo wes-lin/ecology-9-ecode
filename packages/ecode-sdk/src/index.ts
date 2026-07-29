@@ -1,4 +1,5 @@
 export { RemoteTreeItem } from './type';
+export { collectEcodeAppConfigs, synchronizeEcodeAppConfigs, type EcodeAppConfig } from './app-config';
 export { CookieJar, EcodeClient, type EcodeClientOptions } from './client';
 export {
   compileJavaScript,
@@ -24,3 +25,4 @@ export {
   type EcodeLoggerOptions,
   type LogLevel,
 } from './logger';
+export { getEcodeAppId } from './tree-utils';

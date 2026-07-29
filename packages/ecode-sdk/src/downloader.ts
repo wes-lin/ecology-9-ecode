@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import type { RemoteTreeItem } from './type';
+import { isTreeContainer, normalizeTreePath } from './tree-utils';
 
 export type EcodeTreeItem = Omit<RemoteTreeItem, 'children'> & {
   children?: EcodeTreeItem[];
@@ -64,14 +65,6 @@ type RemoteFile = {
   item: EcodeTreeItem;
   relativePath: string;
 };
-
-function isTreeContainer(item: RemoteTreeItem): boolean {
-  return item.treeType === 'folder' || item.businessType === 'type' || item.businessType === 'project';
-}
-
-function normalizeTreePath(value: string): string {
-  return value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-}
 
 function requireNodeValue(item: RemoteTreeItem, field: 'id' | 'name' | 'route'): string {
   const value = item[field];

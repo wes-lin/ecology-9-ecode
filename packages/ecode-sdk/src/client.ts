@@ -309,58 +309,58 @@ export class EcodeClient {
   }
 
   async markFile(id: string, type?: string) {
-    return await this._post('/api/cloudstore/ecode/markFile', {
+    return this._post('/api/cloudstore/ecode/markFile', {
       id,
       type,
     });
   }
 
   async release(folderId: string) {
-    return await this._post('/api/cloudstore/ecode/release', {
+    return this._post('/api/cloudstore/ecode/release', {
       folderId,
     });
   }
 
   async deleteReleaseFile(folderIds: string) {
-    return await this._post('/api/cloudstore/ecode/deleteReleaseFile', {
+    return this._post('/api/cloudstore/ecode/deleteReleaseFile', {
       folderIds,
     });
   }
 
   async setPreStateOrder(appId: string, preStateOrder: number) {
-    return await this._post('/api/cloudstore/ecode/deleteReleaseFile', {
+    return this._post('/api/ecode/type/setPreStateOrder', {
       appId,
       preStateOrder,
     });
   }
 
   async updateTypeName(id: string, name: string) {
-    return await this._post('/api/ecode/type/updateName', {
+    return this._post('/api/ecode/type/updateName', {
       id,
       name,
     });
   }
 
   async updateFolderName(folderId: string, name: string) {
-    return await this._post('api/cloudstore/ecode/updateFolderName', {
+    return this._post('/api/cloudstore/ecode/updateFolderName', {
       folderId,
       name,
     });
   }
 
   async updateFileName(id: string, name: string) {
-    return await this._post('/api/cloudstore/ecode/updateName', {
+    return this._post('/api/cloudstore/ecode/updateName', {
       id,
       name,
     });
   }
 
   async addType(name: string, parentId?: string) {
-    return await this._post('/api/ecode/type/add', { name, parentId });
+    return this._post('/api/ecode/type/add', { name, parentId });
   }
 
   async addFolder(name: string, parentId?: string, typeId?: string) {
-    return await this._post('/api/cloudstore/ecode/addFolder', {
+    return this._post('/api/cloudstore/ecode/addFolder', {
       parentId,
       name,
       typeId,
@@ -368,7 +368,7 @@ export class EcodeClient {
   }
 
   async addFile(folderId: string, name: string, type: 'js' | 'css' | 'md') {
-    return await this._post('/api/cloudstore/ecode/addFile', {
+    return this._post('/api/cloudstore/ecode/addFile', {
       folderId,
       name,
       type,
@@ -376,26 +376,26 @@ export class EcodeClient {
   }
 
   async deleteFile(id: string) {
-    return await this._post('/api/cloudstore/ecode/logicalDeleteFile', { id });
+    return this._post('/api/cloudstore/ecode/logicalDeleteFile', { id });
   }
 
   async deleteFolder(folderId: string) {
-    return await this._post('/api/cloudstore/ecode/logicalDeleteFolder', { folderId });
+    return this._post('/api/cloudstore/ecode/logicalDeleteFolder', { folderId });
   }
 
   async deleteType(id: string) {
-    return await this._post('/api/ecode/type/logicalDelete', { id });
+    return this._post('/api/ecode/type/logicalDelete', { id });
   }
 
   async deleteResource(resourceId: string) {
-    return await this._post('/api/ecode/resource/remove', { resourceId });
+    return this._post('/api/ecode/resource/remove', { resourceId });
   }
 
   async updateFile(id: string, content: string, isJs: boolean): Promise<Response> {
     const base64Content = Buffer.from(content, 'utf-8').toString('base64');
     const compiledContent = isJs ? await compileJavaScript(content) : content;
     const base64CompiledContent = Buffer.from(compiledContent, 'utf-8').toString('base64');
-    return await this._post('/api/cloudstore/ecode/updateFile', {
+    return this._post('/api/cloudstore/ecode/updateFile', {
       id,
       content: base64Content,
       compiledContent: base64CompiledContent,

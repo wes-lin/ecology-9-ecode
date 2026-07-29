@@ -43,6 +43,16 @@ export function getActiveEcodeEnvironment(config: vscode.WorkspaceConfiguration)
   return environments.find((environment) => environment.name === activeName) ?? environments[0];
 }
 
+export function getActiveEcodeEnvironmentRoot(config: vscode.WorkspaceConfiguration): string {
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspaceRoot) throw new Error('No workspace folder open.');
+
+  const environment = getActiveEcodeEnvironment(config);
+  if (!environment) throw new Error('No eCode environment configured.');
+
+  return path.resolve(workspaceRoot, environment.localDir);
+}
+
 export function getEcodeEnvironmentError(environment: EcodeEnvironmentConfig | undefined): string | undefined {
   if (!environment) return 'No eCode environment configured.';
   if (!environment.baseUrl || environment.baseUrl === 'http://localhost') {

@@ -43,6 +43,21 @@ const result = await client.download('/path/to/project', {
 console.log(result.downloaded, result.skipped, result.failed);
 ```
 
+### App configuration files
+
+The SDK can derive application metadata from an eCode tree and synchronize one
+JSON file per app under `.ecode/apps`:
+
+```js
+const path = require('node:path');
+const { collectEcodeAppConfigs, synchronizeEcodeAppConfigs } = require('ecode-sdk');
+
+const apps = collectEcodeAppConfigs(tree);
+
+await synchronizeEcodeAppConfigs(path.resolve('/path/to/project/.ecode/ecode-tree.json'));
+// Writes .ecode/apps/<id>.json and removes stale generated app JSON files.
+```
+
 ### JavaScript compiler
 
 The SDK compiles browser-side JavaScript and JSX with the legacy eCode Babel
