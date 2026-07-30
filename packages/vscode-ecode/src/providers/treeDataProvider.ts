@@ -144,6 +144,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
         },
         async (progress) => {
           return client.download(this._getEnvironmentRootPath(), {
+            overwrite: true,
             onProgress: (state) => {
               if (state.phase === 'tree') {
                 progress.report({ message: 'Scanning remote tree...' });
@@ -182,7 +183,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
       this._output.appendLine('');
     }
 
-    const summary = `${outcome.downloaded} new file(s), ${outcome.skipped} existing file(s) kept`;
+    const summary = `${outcome.downloaded} file(s) downloaded, ${outcome.skipped} file(s) skipped`;
     if (outcome.failed > 0) {
       const message = `eCode download completed: ${summary}; ${outcome.failed} file download failure(s).`;
       const action = await vscode.window.showWarningMessage(message, 'Show Details');
