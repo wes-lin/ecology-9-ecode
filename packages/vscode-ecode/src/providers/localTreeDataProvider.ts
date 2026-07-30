@@ -97,6 +97,81 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
       initialAppId: appId,
       status: '',
       preStateOrder: 10000,
+      children: [
+        {
+          id: createLocalNodeId(),
+          name: 'config',
+          treeType: 'folder',
+          attribute: 'config',
+          hasChild: true,
+          children: [
+            {
+              id: createLocalNodeId(),
+              name: 'configLoad.js',
+              treeType: 'file',
+              attribute: 'config',
+              fileExtension: 'js',
+              hasChild: false,
+            },
+            {
+              id: createLocalNodeId(),
+              name: 'configLoad_default.js',
+              treeType: 'file',
+              attribute: 'non-code',
+              fileExtension: 'js',
+              hasChild: false,
+            },
+            {
+              id: createLocalNodeId(),
+              name: 'config_default.json',
+              treeType: 'file',
+              attribute: 'non-code',
+              fileExtension: 'json',
+              hasChild: false,
+            },
+            {
+              id: createLocalNodeId(),
+              name: 'config.js',
+              treeType: 'file',
+              attribute: 'config',
+              fileExtension: 'js',
+              state: 'pre-state',
+              hasChild: false,
+            },
+            {
+              id: createLocalNodeId(),
+              name: 'config.json',
+              treeType: 'file',
+              attribute: 'non-code',
+              fileExtension: 'json',
+              hasChild: false,
+            },
+            {
+              id: createLocalNodeId(),
+              name: 'config_default.js',
+              treeType: 'file',
+              attribute: 'non-code',
+              fileExtension: 'js',
+              state: 'pre-state',
+              hasChild: false,
+            },
+          ],
+        },
+        {
+          id: createLocalNodeId(),
+          name: 'jar',
+          treeType: 'folder',
+          attribute: 'jar',
+          hasChild: false,
+        },
+        {
+          id: createLocalNodeId(),
+          name: 'resources',
+          treeType: 'folder',
+          attribute: 'resource',
+          hasChild: false,
+        },
+      ],
     };
     await this._createFolderAndNode(parent, item, appPath);
     await this.refresh();
@@ -338,7 +413,26 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     const target = this._getLocalPath(targetPath);
     if (fs.existsSync(target)) throw new Error(`"${item.name}" already exists.`);
     fs.mkdirSync(target, { recursive: false });
+    try {
+      this._materializeNewTreeChildren(target, item.children || []);
+    } catch (error) {
+      fs.rmSync(target, { recursive: true, force: true });
+      throw error;
+    }
     await this._appendChild(parent.id, item);
+  }
+
+  private _materializeNewTreeChildren(parentPath: string, children: EcodeLocalTreeItem[]): void {
+    for (const child of children) {
+      if (!child.name) throw new Error('A local eCode tree node name is missing.');
+      const childPath = path.join(parentPath, child.name);
+      if (child.treeType === 'folder') {
+        fs.mkdirSync(childPath, { recursive: false });
+        this._materializeNewTreeChildren(childPath, child.children || []);
+      } else {
+        fs.writeFileSync(childPath, '', { encoding: 'utf8', flag: 'wx' });
+      }
+    }
   }
 
   private async _appendChild(parentId: string | undefined, child: EcodeLocalTreeItem): Promise<void> {
