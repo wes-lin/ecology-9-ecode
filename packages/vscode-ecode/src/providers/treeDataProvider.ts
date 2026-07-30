@@ -1,66 +1,36 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { promisify } from 'node:util';
 import * as vscode from 'vscode';
-import { EcodeClient, EcodeLogger, type RemoteTreeItem } from 'ecode-sdk';
+import { EcodeClient, EcodeLogger } from 'ecode-sdk';
 import { EcodeNode } from './ecodeNode';
 import { EcodeFileSystemProvider } from './fileSystemProvider';
-import { normalizeNewlines, normalizeRemotePath } from '../utils/pathUtils';
+import { getErrorMessage } from '../utils/errors';
+import { getSafeRelativeTreePath, resolveTreePath } from '../utils/pathUtils';
 import {
   getActiveEcodeEnvironment,
+  getActiveEcodeEnvironmentRoot,
   getEcodeEnvironmentError,
   getEnvironmentCookieFile,
 } from '../config/ecodeEnvironment';
-
-const mkdir = promisify(fs.mkdir);
-const writeFile = promisify(fs.writeFile);
-
-type DownloadNodes = {
-  folders: EcodeNode[];
-  files: EcodeNode[];
-};
-
-type EcodeAppConfig = {
-  path: string;
-  appId: string;
-  appStatus: string;
-  appPreStateOrder: number;
-  preStateFiles: string[];
-  resources: string[];
-  configs: string[];
-  debugMode?: 'y' | 'n';
-};
-
-type LocalEcodeAppConfig = Partial<Omit<EcodeAppConfig, 'appId' | 'path'>> & {
-  appId?: string;
-  path?: string;
-};
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+import { BaseEcodeTreeDataProvider, type EcodeTreeItemPresentation } from './baseTreeDataProvider';
 
 function toBytes(content: string | Buffer): Uint8Array {
   return Buffer.isBuffer(content) ? content : Buffer.from(String(content), 'utf8');
 }
 
-function normalizeContentForWrite(content: string | Buffer): string | Buffer {
-  return Buffer.isBuffer(content) ? content : normalizeNewlines(content);
-}
-
-export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>, vscode.Disposable {
-  private _onDidChangeTreeData = new vscode.EventEmitter<EcodeNode | undefined | null | void>();
-  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
   readonly storageRoot: string;
   client: EcodeClient | null = null;
   rootItems: EcodeNode[] = [];
   private _busy = false;
+  private readonly _output = vscode.window.createOutputChannel('eCode');
 
   // 文件内容缓存：uri → 内容字节
   _fileContents = new Map<string, Uint8Array>();
   private _fsRegistration: vscode.Disposable;
 
   constructor(storageRoot: string) {
+    super();
     this.storageRoot = storageRoot;
 
     // 注册只读 FileSystemProvider（提供面包屑等原生功能）
@@ -104,48 +74,21 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
 
   dispose(): void {
     this._fsRegistration.dispose();
-    this._onDidChangeTreeData.dispose();
+    this._output.dispose();
+    super.dispose();
   }
 
-  getTreeItem(element: EcodeNode): vscode.TreeItem {
-    const isInfo = element.type === 'info';
-    const isFile = element.type === 'file';
-    const treeItem = new vscode.TreeItem(
-      element.label,
-      isInfo || isFile ? vscode.TreeItemCollapsibleState.None : vscode.TreeItemCollapsibleState.Collapsed
-    );
-
-    if (!isInfo) {
-      treeItem.iconPath = this._getIcon(element);
-      treeItem.resourceUri = this._getRemoteUri(element);
-      treeItem.contextValue = this._getContextValue(element);
-      treeItem.tooltip = element.remotePath;
-      if (element.state === 'pre-state') {
-        treeItem.description = 'P';
-      }
-      if (element.type === 'file') {
-        treeItem.command = { command: 'ecode.openLocalFile', title: 'Open Local File', arguments: [element] };
-      }
-    }
-
-    return treeItem;
-  }
-
-  private _getIcon(element: EcodeNode): vscode.ThemeIcon {
-    if (element.loading) return new vscode.ThemeIcon('sync~spin');
-    if (element.type === 'file') return new vscode.ThemeIcon('file');
-    if (element.debugMode === 'y') return new vscode.ThemeIcon('debug');
-    if (element.businessType === 'project') return new vscode.ThemeIcon('project');
-    if (element.businessType === 'type') return new vscode.ThemeIcon('symbol-folder');
-    if (element.appId) {
-      if (element.appStatus === 'released') {
-        return new vscode.ThemeIcon('vm-active');
-      } else {
-        return new vscode.ThemeIcon('vm-outline');
-      }
-    }
-
-    return new vscode.ThemeIcon('folder');
+  protected _getTreeItemPresentation(element: EcodeNode): EcodeTreeItemPresentation {
+    return {
+      resourceUri: this._getRemoteUri(element),
+      contextValue: this._getContextValue(element),
+      tooltip: element.remotePath,
+      fileCommand: {
+        command: 'ecode.viewFile',
+        title: 'View Remote File',
+        arguments: [element],
+      },
+    };
   }
 
   async getChildren(element?: EcodeNode): Promise<EcodeNode[]> {
@@ -172,76 +115,84 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       }
     }
 
-    if (element.hasChild) {
-      const children = await this._listRemoteChildren(element);
-      element.children = children;
-      return children;
-    }
+    if (element.type !== 'folder') return [];
+    if (element.children !== undefined) return element.children;
 
-    return [];
+    const children = await this._listRemoteChildren(element);
+    element.children = children;
+    element.hasChild = children.length > 0;
+    return children;
   }
 
-  async download(): Promise<void> {
+  async download(): Promise<boolean> {
     if (this._busy) {
       vscode.window.showWarningMessage('eCode download is already running.');
-      return;
+      return false;
     }
 
-    await this._setBusy(true);
+    let outcome: Awaited<ReturnType<EcodeClient['download']>> | undefined;
+    let downloadError: unknown;
+
     try {
-      const failed = await vscode.window.withProgress(
+      await this._setBusy(true);
+      const client = this._getClient();
+      outcome = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
           title: 'Downloading eCode source',
           cancellable: false,
         },
         async (progress) => {
-          const nodes: DownloadNodes = { folders: [], files: [] };
-          progress.report({ message: 'Scanning remote tree...' });
-          await this._collectDownloadNodes(undefined, nodes);
-
-          for (const folder of nodes.folders) {
-            await this._ensureLocalFolderFromRemote(folder);
-          }
-
-          await this._writeAppConfig(nodes.folders, nodes.files);
-
-          if (nodes.files.length === 0) {
-            progress.report({ increment: 100, message: 'No files found.' });
-            return 0;
-          }
-
-          const increment = 100 / nodes.files.length;
-          let completed = 0;
-          let failed = 0;
-          for (const file of nodes.files) {
-            try {
-              await this._ensureLocalFileFromRemote(file, { overwrite: true });
-            } catch (error) {
-              failed += 1;
-              console.warn(`Download failed for ${file.remotePath}: ${getErrorMessage(error)}`);
-            }
-            completed += 1;
-            progress.report({
-              increment,
-              message: `Downloaded ${completed - failed}/${nodes.files.length}, failed ${failed}: ${file.remotePath}`,
-            });
-          }
-
-          return failed;
+          return client.download(this._getEnvironmentRootPath(), {
+            onProgress: (state) => {
+              if (state.phase === 'tree') {
+                progress.report({ message: 'Scanning remote tree...' });
+                return;
+              }
+              if (state.total === 0) {
+                progress.report({ message: 'No files found.' });
+                return;
+              }
+              progress.report({
+                message: `Processed ${state.completed}/${state.total}: ${state.relativePath || ''}`,
+              });
+            },
+          });
         }
       );
-
-      if (failed > 0) {
-        vscode.window.showWarningMessage(`eCode source download completed with ${failed} failed file(s).`);
-      } else {
-        vscode.window.showInformationMessage('eCode source download completed.');
-      }
     } catch (error) {
-      vscode.window.showErrorMessage(`Download failed: ${getErrorMessage(error)}`);
+      downloadError = error;
     } finally {
       await this._setBusy(false);
     }
+
+    if (downloadError !== undefined || !outcome) {
+      vscode.window.showErrorMessage(`Download failed: ${getErrorMessage(downloadError)}`);
+      return false;
+    }
+
+    this.rootItems = this._mapTreeItems(outcome.tree, '');
+    this._onDidChangeTreeData.fire();
+
+    if (outcome.failures.length > 0) {
+      this._output.appendLine(`[${new Date().toISOString()}] eCode file download failures`);
+      for (const failure of outcome.failures) {
+        this._output.appendLine(`- ${failure.relativePath}: ${failure.message}`);
+      }
+      this._output.appendLine('');
+    }
+
+    const summary = `${outcome.downloaded} new file(s), ${outcome.skipped} existing file(s) kept`;
+    if (outcome.failed > 0) {
+      const message = `eCode download completed: ${summary}; ${outcome.failed} file download failure(s).`;
+      const action = await vscode.window.showWarningMessage(message, 'Show Details');
+      if (action === 'Show Details') {
+        this._output.show(true);
+      }
+    } else {
+      vscode.window.showInformationMessage(`eCode download completed: ${summary}.`);
+    }
+    return true;
   }
 
   async viewFile(element: EcodeNode): Promise<void> {
@@ -261,26 +212,10 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     }
   }
 
-  async openLocalFile(element: EcodeNode): Promise<void> {
-    if (this._busy) {
-      vscode.window.showWarningMessage('eCode Explorer is busy downloading.');
-      return;
+  handleRemoteFileClosed(document: vscode.TextDocument): void {
+    if (document.uri.scheme === 'ecode') {
+      this._fileContents.delete(document.uri.path);
     }
-
-    try {
-      const targetPath = await this._ensureLocalFileFromRemote(element, { overwrite: false });
-      await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(targetPath), { preview: false });
-    } catch (error) {
-      vscode.window.showErrorMessage(`Open local file failed: ${getErrorMessage(error)}`);
-    }
-  }
-
-  handleLocalFileClosed(document: vscode.TextDocument): void {
-    const element = this._findNodeByLocalUri(document.uri);
-    if (!element) return;
-
-    const remoteUri = this._getRemoteUri(element);
-    this._fileContents.delete(remoteUri.path);
   }
 
   async compareWithRemote(element: EcodeNode): Promise<void> {
@@ -290,7 +225,9 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     }
 
     try {
-      const targetPath = await this._ensureLocalFileFromRemote(element, { overwrite: false });
+      if (element.type !== 'file') throw new Error('Select a local file.');
+      const targetPath = this._getLocalPath(element);
+      if (!fs.existsSync(targetPath)) throw new Error(`Local file does not exist: ${targetPath}`);
       const remoteContent = await this._readRemoteContent(element);
       const safePath = `/${this._getSafeRelativeRemotePath(element.remotePath).replace(/\\/g, '/')}`;
       const remoteUri = vscode.Uri.from({
@@ -524,17 +461,46 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     });
   }
 
-  async uploadResource(_element: EcodeNode): Promise<void> {
+  async uploadResource(element: EcodeNode): Promise<void> {
+    if (element.type !== 'folder' || element.attribute !== 'resource') {
+      vscode.window.showWarningMessage('Upload Resource is only supported on resource folders.');
+      return;
+    }
+
     const selected = await vscode.window.showOpenDialog({
       canSelectFiles: true,
       canSelectFolders: false,
       canSelectMany: false,
       openLabel: 'Upload Resource',
+      title: `Upload Resource to ${element.label}`,
     });
     const file = selected?.[0];
     if (!file) return;
 
-    vscode.window.showInformationMessage(`Selected resource: ${file.fsPath}`);
+    const client = this._getClient();
+    const folderId = this._requireNodeId(element);
+    const fileName = path.basename(file.fsPath);
+    await this._withNodeLoading(element, async () => {
+      try {
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `Uploading ${fileName}`,
+            cancellable: false,
+          },
+          async () => {
+            const response = await client.uploadFile(file.fsPath, folderId);
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`);
+            }
+          }
+        );
+        await this.refreshFolder(element);
+        vscode.window.showInformationMessage(`Resource "${fileName}" uploaded.`);
+      } catch (error) {
+        vscode.window.showErrorMessage(`Upload resource "${fileName}" failed: ${getErrorMessage(error)}`);
+      }
+    });
   }
 
   _requireNodeId(element: EcodeNode): string {
@@ -542,72 +508,6 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       throw new Error(`${this._getNodeKindLabel(element)} id is missing.`);
     }
     return element.id;
-  }
-
-  _getNodeKindLabel(element: EcodeNode): string {
-    if (element.businessType === 'type') return 'type';
-    if (element.type === 'file') return 'file';
-    if (element.appId) return 'app';
-    return 'folder';
-  }
-
-  _getNodeFileExtension(element: EcodeNode): string | undefined {
-    if (element.type !== 'file') return undefined;
-    const extension = element.fileExtension?.trim().replace(/^\./, '');
-    if (extension) return extension;
-    const match = element.label.match(/\.([^.]+)$/);
-    return match?.[1];
-  }
-
-  _normalizeName(value: string, extension?: string): string {
-    const trimmed = value.trim();
-    if (!extension) return trimmed;
-
-    const normalizedExtension = extension.replace(/^\./, '');
-    if (!trimmed.includes('.')) {
-      return `${trimmed}.${normalizedExtension}`;
-    }
-
-    const currentExtension = trimmed.match(/\.([^.]+)$/)?.[1];
-    if (currentExtension !== normalizedExtension) {
-      throw new Error(`Name must end with .${normalizedExtension}.`);
-    }
-
-    return trimmed;
-  }
-
-  async _promptForName(options: {
-    title: string;
-    kind: string;
-    value?: string;
-    extension?: string;
-  }): Promise<string | undefined> {
-    const normalizedExtension = options.extension?.replace(/^\./, '');
-    const value = await vscode.window.showInputBox({
-      title: options.title,
-      prompt: normalizedExtension
-        ? `Enter ${options.kind} name (.${normalizedExtension} will be preserved).`
-        : `Enter ${options.kind} name.`,
-      value: options.value,
-      validateInput: (input) => {
-        const trimmed = input.trim();
-        if (!trimmed) return `${options.kind} name is required.`;
-        if (/[/\\]/.test(trimmed)) return `${options.kind} name cannot contain / or \\.`;
-        if (normalizedExtension) {
-          const hasExtension = trimmed.includes('.');
-          if (hasExtension) {
-            const currentExtension = trimmed.match(/\.([^.]+)$/)?.[1];
-            if (currentExtension !== normalizedExtension) {
-              return `${options.kind} name must end with .${normalizedExtension}.`;
-            }
-          }
-        }
-        return undefined;
-      },
-    });
-
-    if (value === undefined) return undefined;
-    return this._normalizeName(value, normalizedExtension);
   }
 
   async _refreshStructuralParent(element: EcodeNode): Promise<void> {
@@ -648,7 +548,7 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       }
     }
     if (element.type === 'file') {
-      values.push('canOpenLocal', 'canViewRemote', 'canCompare');
+      values.push('canViewRemote');
       if (element.deletable) {
         if (element.state === 'pre-state') {
           values.push('canCancelPreload');
@@ -679,242 +579,29 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     return vscode.Uri.parse(`ecode:/${element.remotePath}`);
   }
 
-  _findNodeByLocalUri(uri: vscode.Uri): EcodeNode | undefined {
-    if (uri.scheme !== 'file') return undefined;
-
-    const normalizedTarget = path.normalize(uri.fsPath).toLowerCase();
-    return this._findNodeByLocalPath(normalizedTarget, this.rootItems);
-  }
-
-  _findNodeByLocalPath(normalizedTarget: string, nodes: EcodeNode[]): EcodeNode | undefined {
-    for (const node of nodes) {
-      if (node.type === 'file') {
-        try {
-          if (path.normalize(this._getLocalPath(node)).toLowerCase() === normalizedTarget) {
-            return node;
-          }
-        } catch {
-          // ignore nodes with invalid remote paths
-        }
-      }
-      if (node.children) {
-        const child = this._findNodeByLocalPath(normalizedTarget, node.children);
-        if (child) return child;
-      }
-    }
-    return undefined;
-  }
-
-  async _updateAppStatus(
-    app: EcodeNode,
-    updates: Pick<Partial<EcodeAppConfig>, 'appStatus' | 'appPreStateOrder'>
-  ): Promise<void> {
+  async _updateAppStatus(app: EcodeNode, updates: Pick<EcodeNode, 'appStatus' | 'appPreStateOrder'>): Promise<void> {
     if (updates.appStatus !== undefined) app.appStatus = updates.appStatus;
     if (updates.appPreStateOrder !== undefined) app.appPreStateOrder = updates.appPreStateOrder;
     this._onDidChangeTreeData.fire(app);
-
-    await this._updateGeneratedAppConfigs((apps) =>
-      apps.map((current) => (current.appId === app.appId ? { ...current, ...updates } : current))
-    );
   }
 
   async _updatePreloadState(element: EcodeNode, enabled: boolean): Promise<void> {
     element.state = enabled ? 'pre-state' : '';
     this._onDidChangeTreeData.fire(element);
-
-    const parent = element.parent;
-    if (!parent) return;
-
-    const relativePath = element.remotePath.slice(parent.remotePath.length + 1);
-    await this._updateGeneratedAppConfigs((apps) =>
-      apps.map((current) => {
-        if (current.path !== parent.remotePath) return current;
-        const preStateFiles = enabled
-          ? [...current.preStateFiles, relativePath]
-          : current.preStateFiles.filter((file) => file !== relativePath);
-        return { ...current, preStateFiles: [...new Set(preStateFiles)] };
-      })
-    );
   }
 
   async _listRemoteChildren(element?: EcodeNode): Promise<EcodeNode[]> {
     const client = this._getClient();
     if (!element) {
       const tree = await client.listTree();
-      return this._mapTree(tree, '');
+      return this._mapTreeItems(tree, '');
     }
 
     const tree =
       element.treeType === 'folder'
         ? await client.listTree(element.id ?? '', '')
         : await client.listTree('', element.id ?? '');
-    return this._mapTree(tree, element.remotePath, element);
-  }
-
-  async _collectDownloadNodes(element: EcodeNode | undefined, nodes: DownloadNodes): Promise<void> {
-    if (!element) {
-      const roots = await this._listRemoteChildren(undefined);
-      this.rootItems = roots;
-      for (const root of roots) {
-        await this._collectDownloadNodes(root, nodes);
-      }
-      return;
-    }
-
-    if (element.type === 'folder') {
-      nodes.folders.push(element);
-      const children = await this._listRemoteChildren(element);
-      element.children = children;
-      for (const child of children) {
-        await this._collectDownloadNodes(child, nodes);
-      }
-      return;
-    }
-
-    nodes.files.push(element);
-  }
-
-  async _ensureLocalFolderFromRemote(element: EcodeNode): Promise<string> {
-    const targetPath = this._getLocalPath(element);
-    await mkdir(targetPath, { recursive: true });
-    return targetPath;
-  }
-
-  async _writeAppConfig(folders: EcodeNode[], files: EcodeNode[]): Promise<void> {
-    const apps = folders
-      .filter((folder) => folder.appId || folder.attribute === 'system')
-      .map((folder) => this._toAppConfig(folder, files));
-    const targetPath = this._getAppConfigPath();
-    const localTargetPath = this._getLocalAppConfigPath();
-    const content = `${JSON.stringify(apps, null, 2)}\n`;
-    await mkdir(path.dirname(targetPath), { recursive: true });
-    await writeFile(targetPath, content);
-    if (!fs.existsSync(localTargetPath)) {
-      await writeFile(localTargetPath, '[]\n');
-    }
-    await this._reconcileLocalAppOverrides();
-  }
-
-  async _updateGeneratedAppConfigs(update: (apps: EcodeAppConfig[]) => EcodeAppConfig[]): Promise<void> {
-    const targetPath = this._getAppConfigPath();
-    await mkdir(path.dirname(targetPath), { recursive: true });
-    const apps = update(this._readAppConfig(targetPath));
-    await writeFile(targetPath, `${JSON.stringify(apps, null, 2)}\n`);
-    await this._reconcileLocalAppOverrides();
-  }
-
-  async _reconcileLocalAppOverrides(): Promise<void> {
-    const localTargetPath = this._getLocalAppConfigPath();
-    if (!fs.existsSync(localTargetPath)) return;
-    const baseline = this._readAppConfig(this._getAppConfigPath());
-    const overrides = this._readLocalAppConfig()
-      .map((override) => {
-        const remote = baseline.find((candidate) =>
-          override.appId ? candidate.appId === override.appId : candidate.path === override.path
-        );
-        const next = { ...override };
-        this._removeMatchingLocalFields(next, remote);
-        return next;
-      })
-      .filter((override) => this._hasLocalOverrideFields(override));
-    await writeFile(localTargetPath, `${JSON.stringify(overrides, null, 2)}\n`);
-  }
-
-  _removeMatchingLocalFields(local: LocalEcodeAppConfig, remote?: EcodeAppConfig): void {
-    if (!remote) return;
-    for (const key of [
-      'appStatus',
-      'appPreStateOrder',
-      'preStateFiles',
-      'resources',
-      'configs',
-      'debugMode',
-    ] as const) {
-      if (local[key] !== undefined && JSON.stringify(local[key]) === JSON.stringify(remote[key])) {
-        delete local[key];
-      }
-    }
-  }
-
-  _hasLocalOverrideFields(config: LocalEcodeAppConfig): boolean {
-    return Object.keys(config).some((key) => key !== 'appId' && key !== 'path');
-  }
-
-  _readLocalAppConfig(): LocalEcodeAppConfig[] {
-    const targetPath = this._getLocalAppConfigPath();
-    if (!fs.existsSync(targetPath)) return [];
-    try {
-      const parsed = JSON.parse(fs.readFileSync(targetPath, 'utf8')) as LocalEcodeAppConfig[];
-      if (!Array.isArray(parsed)) {
-        throw new Error('Expected a JSON array.');
-      }
-      return parsed;
-    } catch (error) {
-      throw new Error(`Invalid local app overrides at ${targetPath}: ${getErrorMessage(error)}`);
-    }
-  }
-
-  _readAppConfig(targetPath: string): EcodeAppConfig[] {
-    if (!fs.existsSync(targetPath)) return [];
-
-    try {
-      const apps = JSON.parse(fs.readFileSync(targetPath, 'utf8')) as EcodeAppConfig[];
-      return Array.isArray(apps) ? apps : [];
-    } catch {
-      return [];
-    }
-  }
-
-  _toAppConfig(app: EcodeNode, files: EcodeNode[]): EcodeAppConfig {
-    return {
-      path: app.remotePath,
-      appId: app.appId,
-      appStatus: app.appStatus || '',
-      appPreStateOrder: app.appPreStateOrder || 0,
-      preStateFiles: this._collectPreStateFiles(app, files),
-      resources: this._collectResources(app, files),
-      configs: this._collectConfigs(app, files),
-      debugMode: app.debugMode,
-    };
-  }
-
-  _collectPreStateFiles(app: EcodeNode, files: EcodeNode[]): string[] {
-    const appPath = app.remotePath.replace(/\/$/, '');
-    return files
-      .filter(
-        (file) =>
-          (file.state === 'pre-state' || file.attribute === 'system') && file.remotePath.startsWith(`${appPath}/`)
-      )
-      .map((file) => file.remotePath.slice(appPath.length + 1));
-  }
-
-  _collectResources(app: EcodeNode, files: EcodeNode[]): string[] {
-    const appPath = app.remotePath.replace(/\/$/, '');
-    return files
-      .filter((file) => file.treeType === 'resource' && file.remotePath.startsWith(`${appPath}/`))
-      .map((file) => file.remotePath.slice(appPath.length + 1));
-  }
-
-  _collectConfigs(app: EcodeNode, files: EcodeNode[]): string[] {
-    const appPath = app.remotePath.replace(/\/$/, '');
-    return files
-      .filter((file) => ['non-code', 'config'].includes(file.attribute) && file.remotePath.startsWith(`${appPath}/`))
-      .map((file) => file.remotePath.slice(appPath.length + 1));
-  }
-
-  async _ensureLocalFileFromRemote(
-    element: EcodeNode,
-    { overwrite = false }: { overwrite?: boolean } = {}
-  ): Promise<string> {
-    const targetPath = this._getLocalPath(element);
-    if (!overwrite && fs.existsSync(targetPath)) {
-      return targetPath;
-    }
-
-    await mkdir(path.dirname(targetPath), { recursive: true });
-    const content = await this._readRemoteContent(element);
-    await writeFile(targetPath, normalizeContentForWrite(content));
-    return targetPath;
+    return this._mapTreeItems(tree, element.remotePath, element);
   }
 
   async _readRemoteContent(element: EcodeNode): Promise<string | Buffer> {
@@ -925,20 +612,8 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
     return client.viewFile(element.id ?? '');
   }
 
-  _getWorkspaceFolderPath(): string {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!workspaceFolder) {
-      throw new Error('No workspace folder open.');
-    }
-    return workspaceFolder;
-  }
-
   _getEnvironmentRootPath(): string {
-    const environment = this._getActiveEnvironment();
-    if (!environment) {
-      throw new Error('No eCode environment configured.');
-    }
-    return path.resolve(this._getWorkspaceFolderPath(), environment.localDir);
+    return getActiveEcodeEnvironmentRoot(this._getConfig());
   }
 
   _getLocalRootPath(): string {
@@ -946,29 +621,11 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
   }
 
   _getSafeRelativeRemotePath(remotePath: string): string {
-    const normalized = path.normalize(normalizeRemotePath(String(remotePath || '')));
-    if (
-      !normalized ||
-      path.isAbsolute(normalized) ||
-      /^[a-zA-Z]:/.test(normalized) ||
-      normalized === '..' ||
-      normalized.startsWith(`..${path.sep}`)
-    ) {
-      throw new Error(`Invalid remote path: ${remotePath}`);
-    }
-    return normalized;
+    return getSafeRelativeTreePath(remotePath, 'remote path');
   }
 
   _getLocalPath(element: EcodeNode): string {
-    const localRoot = this._getLocalRootPath();
-    const relativePath = this._getSafeRelativeRemotePath(element.remotePath);
-    const targetPath = path.resolve(localRoot, relativePath);
-    const normalizedRoot = path.resolve(localRoot).toLowerCase();
-    const normalizedTarget = targetPath.toLowerCase();
-    if (normalizedTarget !== normalizedRoot && !normalizedTarget.startsWith(`${normalizedRoot}${path.sep}`)) {
-      throw new Error(`Invalid remote path: ${element.remotePath}`);
-    }
-    return targetPath;
+    return resolveTreePath(this._getLocalRootPath(), element.remotePath, 'remote path');
   }
 
   _getConfig(): vscode.WorkspaceConfiguration {
@@ -981,14 +638,6 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
 
   _getActiveEnvironmentError(): string | undefined {
     return getEcodeEnvironmentError(this._getActiveEnvironment());
-  }
-
-  _getAppConfigPath(): string {
-    return path.join(this._getEnvironmentRootPath(), '.ecode', 'ecode-apps.json');
-  }
-
-  _getLocalAppConfigPath(): string {
-    return path.join(this._getEnvironmentRootPath(), '.ecode', 'ecode-apps.local.json');
   }
 
   _getClient(): EcodeClient {
@@ -1009,36 +658,5 @@ export class EcodeTreeDataProvider implements vscode.TreeDataProvider<EcodeNode>
       });
     }
     return this.client;
-  }
-
-  _mapTree(tree: RemoteTreeItem[], parentPath = '', parent?: EcodeNode): EcodeNode[] {
-    if (!Array.isArray(tree)) return [];
-    return tree.map((rawItem) => {
-      const item = rawItem;
-      const name = item.name || '';
-      const remotePath = parentPath ? `${parentPath.replace(/\/$/, '')}/${name}` : name;
-      return new EcodeNode({
-        id: item.id,
-        label: name,
-        type:
-          item.treeType === 'folder' || item.businessType === 'type' || item.businessType === 'project'
-            ? 'folder'
-            : 'file',
-        treeType: item.treeType || '',
-        businessType: item.businessType || '',
-        parent,
-        remotePath,
-        route: item.route || '',
-        hasChild: item.hasChild || false,
-        appId: item.initialAppId || item.attribute === 'system' ? item.id : '',
-        attribute: item.attribute || '',
-        deletable: !['system', 'jar', 'config', 'resource', 'non-code'].includes(item.attribute || ''),
-        state: item.state || '',
-        appStatus: item.attribute === 'system' ? 'released' : item.status || '',
-        appPreStateOrder: item.preStateOrder || 0,
-        fileExtension: item.fileExtension || '',
-        debugMode: item.debugMode,
-      });
-    });
   }
 }

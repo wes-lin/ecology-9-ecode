@@ -1,35 +1,52 @@
 # vscode-ecode
 
-VS Code extension for browsing and downloading Ecology 9 ecode files.
+VS Code extension for local and remote Ecology 9 eCode development.
 
-## Features
+## Views
 
-- Activity Bar icon for eCode.
-- Tree view showing ecode directories and files.
-- Download files into the configured local directory (default: `src`).
-- Configuration: `ecode.baseUrl`, `ecode.username`, `ecode.password`, `ecode.localDir`.
+The eCode Activity Bar container contains two views:
 
-## Configuration
+- **Local** is the upper view and is backed by local files.
+- **Remote** is the lower view and is backed by the remote eCode API.
 
-Open VS Code settings and search for `ecode`:
+Running **Download** from the Local view downloads source files to
+`<localDir>/src` and replaces `<localDir>/.ecode/ecode-tree.json` with the
+latest complete remote tree. Existing local source files are never overwritten.
 
-| Setting          | Default            | Description              |
-| ---------------- | ------------------ | ------------------------ |
-| `ecode.baseUrl`  | `http://localhost` | eCode server URL         |
-| `ecode.username` | `''`               | Login account            |
-| `ecode.password` | `''`               | Login password           |
-| `ecode.localDir` | `src`              | Local download directory |
+## Configuration Files
 
-Downloaded files are stored under `<localDir>/src`. App metadata is stored under
-`<localDir>/.ecode`:
+Metadata is stored under `<localDir>/.ecode`:
 
-- `ecode-apps.json` is regenerated from the remote tree on every download.
-- `ecode-apps.local.json` stores only project-specific fields that differ from
-  `ecode-apps.json`. Matching overrides are removed automatically.
+- `ecode-tree.json` is the only local node tree. Download replaces it, and all
+  local tree operations read and write it directly.
+- `apps/<id>.json` is generated from `ecode-tree.json`. Each file contains
+  the app path, status, preload metadata, resources, configs, and debug mode.
 
-## Commands
+The extension watches `ecode-tree.json` and regenerates the app files whenever
+the tree is created, changed, or deleted. App JSON files no longer represented
+by the tree are removed. The generation API is provided by `ecode-sdk` so Node
+scripts can reuse the same behavior.
 
-- `eCode: Refresh Explorer` — reload the tree.
-- `eCode: Download File` — download a selected file to the local directory.
+Local node IDs use `local-<UUID>` with UUID separators removed, for example
+`local-8013eb95bbab480f8cd68cf180c63a0e`. The same value is used for a locally
+created app's node ID, `appId`, and app JSON filename.
 
-Activation is inferred automatically from `contributes.views` and `contributes.commands`, so no `activationEvents` are needed.
+## Local Operations
+
+The Local view supports the same structural and app operations as the Remote
+view:
+
+- Create apps, types, folders, and JS/CSS/Markdown files.
+- Add files to local resource nodes.
+- Rename and delete nodes.
+- Set app release status and preload order.
+- Set or clear file preload state.
+- Compare an existing local file with its current remote content.
+
+Local operations never call the remote API. Structural changes are persisted to
+`ecode-tree.json`; file operations affect only `<localDir>/src`.
+
+The built-in VS Code Explorer has no eCode context menu.
+
+Opening a file in the Remote view displays read-only remote content and never
+downloads or creates a local file.

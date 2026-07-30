@@ -16,10 +16,70 @@ const client = new EcodeClient({
 });
 
 await client.login();
-const tree = await client.listTree('/');
-const buffer = await client.downloadFile('/path/to/file.js');
-await client.uploadFile('/local/path.js', '/remote/path.js');
+const tree = await client.listTree();
+const result = await client.download('/path/to/project');
+await client.uploadFile('/local/path.js', 'remote-folder-id');
 ```
+
+### Download
+
+`client.download(outputRoot)` loads the complete remote tree, downloads source
+files to `<outputRoot>/src`, and generates
+`<outputRoot>/.ecode/ecode-tree.json`.
+
+Existing source files are kept by default. Pass `{ overwrite: true }` to
+replace them. Integrations can use `prepareTree` to merge the new remote tree
+with local metadata before selecting the remote paths that should be
+materialized:
+
+```js
+const result = await client.download('/path/to/project', {
+  prepareTree: async (remoteTree) => {
+    const filePaths = await mergeWithLocalTree(remoteTree);
+    return { filePaths };
+  },
+});
+
+console.log(result.downloaded, result.skipped, result.failed);
+```
+
+### App configuration files
+
+The SDK can derive application metadata from an eCode tree and synchronize one
+JSON file per app under `.ecode/apps`:
+
+```js
+const path = require('node:path');
+const { collectEcodeAppConfigs, synchronizeEcodeAppConfigs } = require('ecode-sdk');
+
+const apps = collectEcodeAppConfigs(tree);
+
+await synchronizeEcodeAppConfigs(path.resolve('/path/to/project/.ecode/ecode-tree.json'));
+// Writes .ecode/apps/<id>.json and removes stale generated app JSON files.
+```
+
+### JavaScript compiler
+
+The SDK compiles browser-side JavaScript and JSX with the legacy eCode Babel
+toolchain (Babel standalone 7.5.5). It uses the classic JSX runtime, so the
+generated code continues to use the global `React.createElement`.
+
+```js
+const path = require('node:path');
+const { compileJavaScript, compileJavaScriptFile } = require('ecode-sdk');
+
+const code = compileJavaScript('const view = <div>Hello</div>;');
+
+const fileCode = await compileJavaScriptFile(path.resolve('index.test.js'));
+// Returns the compiled content without writing an output file.
+```
+
+The compiler uses the legacy `es2015`, `react`, decorators, class-properties,
+and `transform-instanceof` configuration. Decorators use legacy mode, including
+decorated class properties. Pass `sourceType`, `comments`, `compact`,
+`minified`, or `retainLines` to override output options. Project Babel
+configuration files do not affect the standalone compiler, so output stays
+deterministic.
 
 ## Notes
 

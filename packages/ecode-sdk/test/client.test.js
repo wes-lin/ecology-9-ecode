@@ -42,6 +42,21 @@ describe('EcodeClient', () => {
     assert.ok(url.includes('typeId=456'));
   });
 
+  it('should use an absolute API path when updating a folder name', async () => {
+    const client = new EcodeClient({ baseUrl: 'http://example.com' });
+    let request;
+    client._post = async (apiPath, body) => {
+      request = { apiPath, body };
+    };
+
+    await client.updateFolderName('folder-1', 'Renamed');
+
+    assert.deepStrictEqual(request, {
+      apiPath: '/api/cloudstore/ecode/updateFolderName',
+      body: { folderId: 'folder-1', name: 'Renamed' },
+    });
+  });
+
   it('should use NOOP_LOGGER when no logger option is provided', () => {
     const client = new EcodeClient({ baseUrl: 'http://example.com' });
     assert.strictEqual(client.logger, NOOP_LOGGER);
