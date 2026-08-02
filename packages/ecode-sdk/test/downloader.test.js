@@ -97,4 +97,26 @@ describe('eCode downloader', () => {
       fs.rmSync(temporaryRoot, { recursive: true, force: true });
     }
   });
+
+  it('should overwrite an existing source file when requested', async () => {
+    const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ecode-download-overwrite-'));
+    const targetPath = path.join(temporaryRoot, 'src', 'Type', 'App', 'index.js');
+
+    try {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath, 'local change', 'utf8');
+
+      const result = await createClient().download(temporaryRoot, {
+        overwrite: true,
+        prepareTree: () => ({ filePaths: ['Type/App/index.js'] }),
+      });
+
+      assert.strictEqual(result.downloaded, 1);
+      assert.strictEqual(result.skipped, 0);
+      assert.strictEqual(result.failed, 0);
+      assert.strictEqual(fs.readFileSync(targetPath, 'utf8'), 'const value = 1;\n');
+    } finally {
+      fs.rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  });
 });

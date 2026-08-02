@@ -11,7 +11,8 @@ The eCode Activity Bar container contains two views:
 
 Running **Download** from the Local view downloads source files to
 `<localDir>/src` and replaces `<localDir>/.ecode/ecode-tree.json` with the
-latest complete remote tree. Existing local source files are never overwritten.
+latest complete remote tree. Existing local source files are overwritten with
+their latest remote contents.
 
 ## Configuration Files
 

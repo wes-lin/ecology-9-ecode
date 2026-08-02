@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm *)",
+      "Skill(simplify)",
+      "Bash(git *)"
+    ]
+  }
+}
