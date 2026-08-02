@@ -1,4 +1,4 @@
-import { promises as fs } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { transform } from '@babel/standalone';
 
@@ -45,16 +45,25 @@ export function compileJavaScript(source: string, options: EcodeJavaScriptCompil
 }
 
 /**
- * Read and compile a JavaScript file without writing an output file.
+ * Read, compile, and write a JavaScript file synchronously.
  */
-export async function compileJavaScriptFile(
+export function compileJavaScriptFile(
   inputPath: string,
+  outputPath: string,
   options: EcodeJavaScriptFileCompileOptions = {}
-): Promise<string> {
+): string {
   const resolvedInput = path.resolve(inputPath);
-  const source = await fs.readFile(resolvedInput, 'utf8');
-  return compileJavaScript(source, {
+  const resolvedOutput = path.resolve(outputPath);
+  if (resolvedInput === resolvedOutput) {
+    throw new Error('JavaScript compiler output must not overwrite the source file.');
+  }
+
+  const source = readFileSync(resolvedInput, 'utf8');
+  const compiled = compileJavaScript(source, {
     ...options,
     filename: options.filename ?? resolvedInput,
   });
+  mkdirSync(path.dirname(resolvedOutput), { recursive: true });
+  writeFileSync(resolvedOutput, compiled, 'utf8');
+  return compiled;
 }

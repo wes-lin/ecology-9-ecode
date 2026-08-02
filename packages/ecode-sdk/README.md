@@ -70,8 +70,8 @@ const { compileJavaScript, compileJavaScriptFile } = require('ecode-sdk');
 
 const code = compileJavaScript('const view = <div>Hello</div>;');
 
-const fileCode = await compileJavaScriptFile(path.resolve('index.test.js'));
-// Returns the compiled content without writing an output file.
+const fileCode = compileJavaScriptFile(path.resolve('index.test.js'), path.resolve('dist/compiled_index.test.js'));
+// Returns the compiled content after synchronously writing the output file.
 ```
 
 The compiler uses the legacy `es2015`, `react`, decorators, class-properties,
