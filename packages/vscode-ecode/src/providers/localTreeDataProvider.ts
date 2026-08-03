@@ -5,7 +5,7 @@ import { synchronizeEcodeAppConfigs } from 'ecode-sdk';
 import { getActiveEcodeEnvironmentRoot } from '../config/ecodeEnvironment';
 import { readLocalTreeFile, writeLocalTreeFile, type EcodeLocalTreeItem } from '../config/ecodeLocalTree';
 import { getErrorMessage } from '../utils/errors';
-import { createLocalNodeId, isLocalNodeId } from '../utils/localNodeId';
+import { createEcodeId, createLocalNodeId, isLocalNodeId } from '../utils/localNodeId';
 import { normalizeTreePath, resolveTreePath } from '../utils/pathUtils';
 import { BaseEcodeTreeDataProvider, type EcodeTreeItemPresentation } from './baseTreeDataProvider';
 import { EcodeNode } from './ecodeNode';
@@ -87,7 +87,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     const name = await this._promptForName({ title: 'Create Local App', kind: 'app' });
     if (!name) return;
 
-    const appId = createLocalNodeId();
+    const appId = createEcodeId();
     const appPath = this._childPath(parent, name);
     const item: EcodeLocalTreeItem = {
       id: appId,
@@ -188,7 +188,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     await this._createFolderAndNode(
       parent,
       {
-        id: createLocalNodeId(),
+        id: createEcodeId(),
         name,
         treeType: 'folder',
         businessType: 'type',

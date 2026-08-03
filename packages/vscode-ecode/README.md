@@ -34,9 +34,10 @@ the tree is created, changed, or deleted. App JSON files no longer represented
 by the tree are removed. The generation API is provided by `ecode-sdk` so Node
 scripts can reuse the same behavior.
 
-Local node IDs use `local-<UUID>` with UUID separators removed, for example
-`local-8013eb95bbab480f8cd68cf180c63a0e`. The same value is used for a locally
-created app's node ID, `appId`, and app JSON filename.
+Locally created apps and types use 32-character UUIDs without separators or a
+`local-` prefix. A locally created app uses the same UUID for its node ID,
+`appId`, and app JSON filename. Other locally created folders and files use
+`local-<UUID>` IDs so the extension can distinguish them from downloaded nodes.
 
 ## Local Operations
 
