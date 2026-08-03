@@ -3,7 +3,7 @@
   "displayName": "eCode Explorer",
   "description": "Browse and download Ecology 9 ecode files from VS Code",
   "icon": "assets/ecode.png",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "publisher": "ecode-dev-assistant",
   "repository": {
     "url": "https://github.com/wes-lin/ecology-9-ecode/tree/main/packages/vscode-ecode"
@@ -25,7 +25,7 @@
         "ecode.environments": {
           "type": "array",
           "default": [],
-          "description": "Named eCode environments.",
+          "description": "Named eCode environments. Use the eCode: Manage Environments command for a visual editor.",
           "items": {
             "type": "object",
             "required": [
@@ -128,7 +128,8 @@
       },
       {
         "command": "ecode.openSettings",
-        "title": "Open Settings",
+        "title": "Manage Environments",
+        "category": "eCode",
         "icon": "$(gear)",
         "enablement": "!ecodeExplorer.busy"
       },
@@ -311,6 +312,11 @@
           "command": "ecode.refresh",
           "when": "view == ecodeExplorer && !ecodeExplorer.busy",
           "group": "navigation@0"
+        },
+        {
+          "command": "ecode.openSettings",
+          "when": "view == ecodeExplorer",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [

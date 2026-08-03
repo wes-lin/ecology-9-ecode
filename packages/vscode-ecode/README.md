@@ -9,6 +9,12 @@ The eCode Activity Bar container contains two views:
 - **Local** is the upper view and is backed by local files.
 - **Remote** is the lower view and is backed by the remote eCode API.
 
+Use the gear button in either view, or run **eCode: Manage Environments** from
+the Command Palette, to open the visual environment editor. It supports adding,
+removing, reordering, and selecting the active environment, as well as browsing
+for the local directory. Saving the form updates the existing
+`ecode.environments` and `ecode.activeEnvironment` VS Code settings.
+
 Running **Download** from the Local view downloads source files to
 `<localDir>/src` and replaces `<localDir>/.ecode/ecode-tree.json` with the
 latest complete remote tree. Existing local source files are overwritten with

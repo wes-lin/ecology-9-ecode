@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { getActiveEcodeEnvironment, getEcodeEnvironments } from './config/ecodeEnvironment';
 import { EcodeNode } from './providers/ecodeNode';
+import { EcodeEnvironmentManager } from './providers/environmentManager';
 import { LocalTreeDataProvider } from './providers/localTreeDataProvider';
 import { EcodeTreeDataProvider } from './providers/treeDataProvider';
 import { getErrorMessage } from './utils/errors';
@@ -16,6 +17,7 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: localTreeDataProvider,
     showCollapseAll: true,
   });
+  const environmentManager = new EcodeEnvironmentManager(context.extensionUri);
   const refreshLocalTree = (uri?: vscode.Uri): void => {
     localTreeDataProvider.reloadFromTree(uri?.fsPath).catch((error) => {
       vscode.window.showErrorMessage(`Refresh local eCode metadata failed: ${getErrorMessage(error)}`);
@@ -23,7 +25,13 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   vscode.commands.executeCommand('setContext', 'ecodeExplorer.busy', false);
 
-  context.subscriptions.push(remoteTreeView, localTreeView, treeDataProvider, localTreeDataProvider);
+  context.subscriptions.push(
+    remoteTreeView,
+    localTreeView,
+    treeDataProvider,
+    localTreeDataProvider,
+    environmentManager
+  );
   context.subscriptions.push(vscode.commands.registerCommand('ecode.refresh', () => treeDataProvider.refresh()));
   context.subscriptions.push(
     vscode.commands.registerCommand('ecode.local.refresh', () => localTreeDataProvider.reloadFromTree())
@@ -34,10 +42,11 @@ export function activate(context: vscode.ExtensionContext): void {
       const config = vscode.workspace.getConfiguration('ecode');
       const environments = getEcodeEnvironments(config);
       if (environments.length === 0) {
-        const action = await vscode.window.showInformationMessage('No eCode environments configured.', 'Open Settings');
-        if (action === 'Open Settings') {
-          await vscode.commands.executeCommand('workbench.action.openSettings', 'ecode.environments');
-        }
+        const action = await vscode.window.showInformationMessage(
+          'No eCode environments configured.',
+          'Add Environment'
+        );
+        if (action === 'Add Environment') environmentManager.show();
         return;
       }
 
@@ -171,7 +180,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('ecode.openSettings', () => {
-      vscode.commands.executeCommand('workbench.action.openSettings', 'ecode');
+      environmentManager.show();
     })
   );
 
