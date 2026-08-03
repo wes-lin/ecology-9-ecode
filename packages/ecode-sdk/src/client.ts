@@ -408,6 +408,26 @@ export class EcodeClient {
     return this._post(`/api/ecode/resource/upload?folderId=${folderId}`, form, form.getHeaders());
   }
 
+  async cacheMonitor() {
+    return this._get('/commcache/cacheMonitor.jsp');
+  }
+
+  async delPlugin(folderId: string) {
+    return this._get(`/api/ecode/delPlugin?folderId=${folderId}`);
+  }
+
+  async scanUpgradePackage() {
+    return this._get('/api/ecode/scanUpgradePackage');
+  }
+
+  async upgradePackages(appIds: string[]) {
+    await this.cacheMonitor();
+    for (const appId of appIds) {
+      await this.delPlugin(appId);
+    }
+    await this.scanUpgradePackage();
+  }
+
   _buildUrl(path: string, params?: Params): string {
     const base = this.baseUrl.replace(/\/$/, '');
     const url = new URL(base + path);
