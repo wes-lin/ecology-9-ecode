@@ -38,9 +38,9 @@ importers:
       '@babel/standalone':
         specifier: 7.5.5
         version: 7.5.5
-      form-data:
-        specifier: ^4.0.0
-        version: 4.0.6
+      yazl:
+        specifier: ^2.5.1
+        version: 2.5.1
 
   packages/vscode-ecode:
     devDependencies:

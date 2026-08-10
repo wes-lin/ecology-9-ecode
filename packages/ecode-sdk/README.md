@@ -18,7 +18,7 @@ const client = new EcodeClient({
 await client.login();
 const tree = await client.listTree();
 const result = await client.download('/path/to/project');
-await client.uploadFile('/local/path.js', 'remote-folder-id');
+await client.uploadResource('/local/path.js', 'remote-folder-id');
 ```
 
 ### Download
@@ -58,6 +58,58 @@ await synchronizeEcodeAppConfigs(path.resolve('/path/to/project/.ecode/ecode-tre
 // Writes .ecode/apps/<id>.json and removes stale generated app JSON files.
 ```
 
+### Upgrade packages
+
+The SDK builds Ecology app upload archives with `buildAppUpgradePackage`.
+Pass the exact app IDs to include; the project must contain `src/`,
+`.ecode/apps/`, and `.ecode/ecode-tree.json`:
+
+```js
+const { buildAppUpgradePackage } = require('ecode-sdk');
+
+const result = await buildAppUpgradePackage({
+  projectRoot: '/path/to/project',
+  outputDirectory: '/path/to/project/dist/app-upgrade',
+  apps: ['11111111111111111111111111111111', '22222222222222222222222222222222'],
+});
+
+console.log(result.archivePath);
+```
+
+The caller owns `outputDirectory`; the SDK writes the current ZIP, plan, and
+checksum there without removing existing files. The archive layout matches the
+Ecology app export format: `<timestamp><uuid>/ecode.json` plus one direct
+`<timestamp><uuid>/<appId>/` source directory for every selected app. The
+merged `ecode.json` contains all selected apps and their shared type tree. The
+generated plan records each app's `appId` and `appStatus` for deployment.
+
+Callers that already hold app metadata can pass `appConfigs`; in that case the
+builder does not read `.ecode/apps/`.
+
+### Import apps
+
+Build and publish a package with the shared upload/import workflow:
+
+```js
+const { publishAppUpgradePackage } = require('ecode-sdk');
+
+const published = await publishAppUpgradePackage(client, result.archivePath, result.plan.apps);
+console.log(published.fileId);
+```
+
+For lower-level integrations, an already uploaded package can still be imported
+with per-app options:
+
+```js
+await client.importApps(fileId, {
+  '11111111111111111111111111111111': {
+    cover: 'y',
+    autoRelease: 'y',
+    coverConfig: 'n',
+  },
+});
+```
+
 ### JavaScript compiler
 
 The SDK compiles browser-side JavaScript and JSX with the legacy eCode Babel
@@ -83,4 +135,6 @@ deterministic.
 
 ## Notes
 
-The SDK uses the modern Node.js global `fetch` API plus `form-data` for uploads. It maintains a cookie jar automatically, so `login()` stores the session cookie and subsequent requests carry it automatically. The actual endpoint paths (`/api/ecode/*`) are placeholders and should be replaced with the real ecode API routes once known.
+The SDK uses the modern Node.js global `fetch`, `FormData`, and `Blob` APIs for
+requests and uploads. It maintains a cookie jar automatically, so `login()`
+stores the session cookie and subsequent requests carry it automatically.

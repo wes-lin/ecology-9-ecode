@@ -18,7 +18,8 @@ for the local directory. Saving the form updates the existing
 Running **Download** from the Local view downloads source files to
 `<localDir>/src` and replaces `<localDir>/.ecode/ecode-tree.json` with the
 latest complete remote tree. Existing local source files are overwritten with
-their latest remote contents.
+their latest remote contents. `localDir` defaults to `./`, the current workspace
+directory.
 
 ## Configuration Files
 
@@ -50,9 +51,15 @@ view:
 - Set app release status and preload order.
 - Set or clear file preload state.
 - Compare an existing local file with its current remote content.
+- Select and publish local apps to the active eCode environment.
 
-Local operations never call the remote API. Structural changes are persisted to
-`ecode-tree.json`; file operations affect only `<localDir>/src`.
+Local structural and file operations are persisted locally. **Publish Local
+Apps** is the remote operation: it builds one package per selected app, uploads
+each package, and imports it into the active environment. Publishing enters a
+selection mode directly in the existing Local tree. Only apps represented by
+Local tree nodes with an `appId` participate: folder checkboxes select or clear
+all descendant apps, and app checkboxes can be changed individually. Publishing
+passes app metadata collected from `ecode-tree.json` directly to the SDK.
 
 The built-in VS Code Explorer has no eCode context menu.
 

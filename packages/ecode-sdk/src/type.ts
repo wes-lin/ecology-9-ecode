@@ -12,4 +12,8 @@ export type RemoteTreeItem = {
   fileExtension?: string;
   route?: string;
   debugMode?: 'y' | 'n';
+  parentId?: string;
+  coverConfig?: boolean;
+  shareMd?: string;
+  caseVersion?: string;
 };

@@ -1,5 +1,8 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { EcodeClient, CookieJar } = require('../dist/client.js');
 const { EcodeLogger, NOOP_LOGGER } = require('../dist/logger.js');
 
@@ -57,6 +60,96 @@ describe('EcodeClient', () => {
     });
   });
 
+  it('should import multiple apps with per-app operations', async () => {
+    const client = new EcodeClient({ baseUrl: 'http://example.com' });
+    let request;
+    client._post = async (apiPath, body) => {
+      request = { apiPath, body };
+    };
+
+    await client.importApps(846001, {
+      '6bbdf5da9e2c4e0daf37e6ba3cce9e01': {
+        cover: 'y',
+        autoRelease: 'y',
+        coverConfig: 'n',
+      },
+      '591a8ccf800d4c0a97b7e02c36ce02d1': {
+        cover: 'y',
+        autoRelease: 'y',
+        coverConfig: 'n',
+      },
+    });
+
+    assert.deepStrictEqual(request, {
+      apiPath: '/api/ecode/type/importDemo',
+      body: {
+        fileId: 846001,
+        impOp: JSON.stringify({
+          '6bbdf5da9e2c4e0daf37e6ba3cce9e01': {
+            cover: 'y',
+            autoRelease: 'y',
+            coverConfig: 'n',
+          },
+          '591a8ccf800d4c0a97b7e02c36ce02d1': {
+            cover: 'y',
+            autoRelease: 'y',
+            coverConfig: 'n',
+          },
+        }),
+      },
+    });
+  });
+
+  it('should build default import operations from app ids', async () => {
+    const client = new EcodeClient({ baseUrl: 'http://example.com' });
+    let request;
+    client._post = async (apiPath, body) => {
+      request = { apiPath, body };
+    };
+
+    await client.importApps('846001', ['app-a', 'app-b']);
+
+    assert.deepStrictEqual(JSON.parse(request.body.impOp), {
+      'app-a': { cover: 'y', autoRelease: 'y', coverConfig: 'n' },
+      'app-b': { cover: 'y', autoRelease: 'y', coverConfig: 'n' },
+    });
+  });
+
+  it('should upload document and resource files as native multipart form data', async () => {
+    const client = new EcodeClient({ baseUrl: 'http://example.com' });
+    const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ecode-upload-'));
+    const filePath = path.join(tempDirectory, 'app.zip');
+    fs.writeFileSync(filePath, 'zip-content');
+    let request;
+    client._post = async (apiPath, body, headers) => {
+      request = { apiPath, body, headers };
+    };
+
+    try {
+      await client.uploadFile(filePath);
+
+      assert.strictEqual(request.apiPath, '/api/doc/upload/uploadFile');
+      assert.ok(request.body instanceof FormData);
+      assert.strictEqual(request.headers, undefined);
+      const uploadedFile = request.body.get('Filedata');
+      assert.ok(uploadedFile instanceof Blob);
+      assert.strictEqual(uploadedFile.name, 'app.zip');
+      assert.strictEqual(Buffer.from(await uploadedFile.arrayBuffer()).toString('utf8'), 'zip-content');
+
+      await client.uploadResource(filePath, 'folder-1');
+
+      assert.strictEqual(request.apiPath, '/api/ecode/resource/upload?folderId=folder-1');
+      assert.ok(request.body instanceof FormData);
+      assert.strictEqual(request.headers, undefined);
+      const uploadedResource = request.body.get('file');
+      assert.ok(uploadedResource instanceof Blob);
+      assert.strictEqual(uploadedResource.name, 'app.zip');
+      assert.strictEqual(Buffer.from(await uploadedResource.arrayBuffer()).toString('utf8'), 'zip-content');
+    } finally {
+      fs.rmSync(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it('should use NOOP_LOGGER when no logger option is provided', () => {
     const client = new EcodeClient({ baseUrl: 'http://example.com' });
     assert.strictEqual(client.logger, NOOP_LOGGER);
@@ -74,6 +167,52 @@ describe('EcodeClient', () => {
       logger: { level: 'warn', console: false },
     });
     assert.ok(client.logger instanceof EcodeLogger);
+  });
+
+  it('should reject API-level failures instead of treating them as successful responses', async () => {
+    const originalFetch = global.fetch;
+    const client = new EcodeClient({ baseUrl: 'http://example.com' });
+    client.jar.setCookie('session=test');
+    global.fetch = async () =>
+      new Response(JSON.stringify({ api_status: false, msg: 'Business failure' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+
+    try {
+      await assert.rejects(client._get('/api/test'), /Business failure/);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('should validate the API result returned after a session-expiry retry', async () => {
+    const originalFetch = global.fetch;
+    const client = new EcodeClient({ baseUrl: 'http://example.com' });
+    client.jar.setCookie('session=expired');
+    let requestCount = 0;
+    let loginCount = 0;
+    client.login = async () => {
+      loginCount += 1;
+      client.jar.setCookie('session=renewed');
+    };
+    global.fetch = async () => {
+      requestCount += 1;
+      const payload =
+        requestCount === 1 ? { errorCode: '002', msg: '登录信息超时' } : { api_status: false, msg: 'Retry failure' };
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+
+    try {
+      await assert.rejects(client._get('/api/test'), /Retry failure/);
+      assert.strictEqual(loginCount, 1);
+      assert.strictEqual(requestCount, 2);
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 });
 

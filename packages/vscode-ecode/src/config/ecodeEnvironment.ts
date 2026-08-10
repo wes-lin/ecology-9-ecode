@@ -32,7 +32,7 @@ export function getEcodeEnvironments(config: vscode.WorkspaceConfiguration): Eco
       baseUrl: toStringValue(environment.baseUrl),
       username: toStringValue(environment.username),
       password: toStringValue(environment.password),
-      localDir: toStringValue(environment.localDir) || 'src',
+      localDir: toStringValue(environment.localDir) || './',
     }))
     .filter((environment) => environment.name);
 }

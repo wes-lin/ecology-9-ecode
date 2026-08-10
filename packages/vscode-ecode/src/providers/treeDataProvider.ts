@@ -1,16 +1,16 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { EcodeClient, EcodeLogger } from 'ecode-sdk';
+import type { EcodeClient } from 'ecode-sdk';
 import { EcodeNode } from './ecodeNode';
 import { EcodeFileSystemProvider } from './fileSystemProvider';
 import { getErrorMessage } from '../utils/errors';
+import { ActiveEcodeClientProvider } from '../utils/ecodeClientFactory';
 import { getSafeRelativeTreePath, resolveTreePath } from '../utils/pathUtils';
 import {
   getActiveEcodeEnvironment,
   getActiveEcodeEnvironmentRoot,
   getEcodeEnvironmentError,
-  getEnvironmentCookieFile,
 } from '../config/ecodeEnvironment';
 import { BaseEcodeTreeDataProvider, type EcodeTreeItemPresentation } from './baseTreeDataProvider';
 
@@ -19,19 +19,18 @@ function toBytes(content: string | Buffer): Uint8Array {
 }
 
 export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
-  readonly storageRoot: string;
-  client: EcodeClient | null = null;
   rootItems: EcodeNode[] = [];
   private _busy = false;
   private readonly _output = vscode.window.createOutputChannel('eCode');
+  private readonly _clientProvider: ActiveEcodeClientProvider;
 
   // 文件内容缓存：uri → 内容字节
   _fileContents = new Map<string, Uint8Array>();
   private _fsRegistration: vscode.Disposable;
 
-  constructor(storageRoot: string) {
+  constructor(storageRoot: string, clientProvider = new ActiveEcodeClientProvider(storageRoot)) {
     super();
-    this.storageRoot = storageRoot;
+    this._clientProvider = clientProvider;
 
     // 注册只读 FileSystemProvider（提供面包屑等原生功能）
     const fileSystemProvider = new EcodeFileSystemProvider(this);
@@ -47,7 +46,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
       return;
     }
 
-    this.client = null;
+    this._clientProvider.clear();
     this.rootItems = [];
     this._fileContents.clear();
     this._onDidChangeTreeData.fire();
@@ -490,7 +489,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
             cancellable: false,
           },
           async () => {
-            const response = await client.uploadFile(file.fsPath, folderId);
+            const response = await client.uploadResource(file.fsPath, folderId);
             if (!response.ok) {
               throw new Error(`HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`);
             }
@@ -562,6 +561,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
       values.push('canDelete', 'canRename');
     }
     if (element.appId) {
+      values.push('canShowAppId');
       values.push('canCreateNewFolder', 'canCreateNewJs', 'canCreateNewCss', 'canCreateNewMd');
       if (element.deletable) {
         values.push('canSetPreloadOrder');
@@ -642,22 +642,6 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
   }
 
   _getClient(): EcodeClient {
-    if (!this.client) {
-      const environment = this._getActiveEnvironment();
-      if (!environment) {
-        throw new Error('No eCode environment configured.');
-      }
-      this.client = new EcodeClient({
-        baseUrl: environment.baseUrl,
-        username: environment.username,
-        password: environment.password,
-        cookieFile: getEnvironmentCookieFile(this.storageRoot, environment),
-        logger: new EcodeLogger({
-          console: true,
-          level: 'debug',
-        }),
-      });
-    }
-    return this.client;
+    return this._clientProvider.get(this._getConfig());
   }
 }

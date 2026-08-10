@@ -4,11 +4,13 @@ import { EcodeNode } from './providers/ecodeNode';
 import { EcodeEnvironmentManager } from './providers/environmentManager';
 import { LocalTreeDataProvider } from './providers/localTreeDataProvider';
 import { EcodeTreeDataProvider } from './providers/treeDataProvider';
+import { ActiveEcodeClientProvider } from './utils/ecodeClientFactory';
 import { getErrorMessage } from './utils/errors';
 
 export function activate(context: vscode.ExtensionContext): void {
-  const treeDataProvider = new EcodeTreeDataProvider(context.globalStorageUri.fsPath);
-  const localTreeDataProvider = new LocalTreeDataProvider();
+  const clientProvider = new ActiveEcodeClientProvider(context.globalStorageUri.fsPath);
+  const treeDataProvider = new EcodeTreeDataProvider(context.globalStorageUri.fsPath, clientProvider);
+  const localTreeDataProvider = new LocalTreeDataProvider(context.globalStorageUri.fsPath, clientProvider);
   const remoteTreeView = vscode.window.createTreeView('ecodeExplorer', {
     treeDataProvider,
     showCollapseAll: true,
@@ -16,6 +18,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const localTreeView = vscode.window.createTreeView('ecodeLocalExplorer', {
     treeDataProvider: localTreeDataProvider,
     showCollapseAll: true,
+    manageCheckboxStateManually: true,
   });
   const environmentManager = new EcodeEnvironmentManager(context.extensionUri);
   const refreshLocalTree = (uri?: vscode.Uri): void => {
@@ -24,6 +27,7 @@ export function activate(context: vscode.ExtensionContext): void {
     });
   };
   vscode.commands.executeCommand('setContext', 'ecodeExplorer.busy', false);
+  vscode.commands.executeCommand('setContext', 'ecodeLocalExplorer.publishSelection', false);
 
   context.subscriptions.push(
     remoteTreeView,
@@ -31,6 +35,11 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider,
     localTreeDataProvider,
     environmentManager
+  );
+  context.subscriptions.push(
+    localTreeView.onDidChangeCheckboxState((event) => {
+      localTreeDataProvider.handlePublishCheckboxChange(event.items);
+    })
   );
   context.subscriptions.push(vscode.commands.registerCommand('ecode.refresh', () => treeDataProvider.refresh()));
   context.subscriptions.push(
@@ -55,7 +64,7 @@ export function activate(context: vscode.ExtensionContext): void {
         environments.map((environment) => ({
           label: environment.name,
           description: environment.baseUrl,
-          detail: `User: ${environment.username || '(empty)'} | Local: ${environment.localDir || 'src'}`,
+          detail: `User: ${environment.username || '(empty)'} | Local: ${environment.localDir || './'}`,
           environment,
           picked: environment.name === activeEnvironment?.name,
         })),
@@ -63,6 +72,8 @@ export function activate(context: vscode.ExtensionContext): void {
       );
       if (!picked) return;
 
+      await localTreeDataProvider.cancelPublishAppsSelection();
+      localTreeView.message = undefined;
       await config.update('activeEnvironment', picked.environment.name, vscode.ConfigurationTarget.Global);
       await treeDataProvider.refresh();
       await localTreeDataProvider.refresh();
@@ -79,6 +90,53 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('ecode.download', async () => {
       const downloaded = await treeDataProvider.download();
       if (downloaded) await localTreeDataProvider.reloadFromTree();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.local.publishApps', async () => {
+      try {
+        const started = await localTreeDataProvider.startPublishAppsSelection();
+        if (started) {
+          localTreeView.message = 'Select apps or folders, then use Upload Selected Apps.';
+          await vscode.commands.executeCommand('ecodeLocalExplorer.focus');
+        }
+      } catch (error) {
+        vscode.window.showErrorMessage(`Upload local eCode apps failed: ${getErrorMessage(error)}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.local.confirmPublishApps', async () => {
+      try {
+        const published = await localTreeDataProvider.publishSelectedApps();
+        if (published || !localTreeDataProvider.isPublishSelectionActive) localTreeView.message = undefined;
+      } catch (error) {
+        if (!localTreeDataProvider.isPublishSelectionActive) localTreeView.message = undefined;
+        vscode.window.showErrorMessage(`Publish local eCode apps failed: ${getErrorMessage(error)}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.local.cancelPublishApps', async () => {
+      await localTreeDataProvider.cancelPublishAppsSelection();
+      localTreeView.message = undefined;
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.showAppId', async (item?: EcodeNode) => {
+      if (!item?.appId) {
+        vscode.window.showWarningMessage('Select an eCode app.');
+        return;
+      }
+      const action = await vscode.window.showInformationMessage(`App ID: ${item.appId}`, 'Copy');
+      if (action === 'Copy') {
+        await vscode.env.clipboard.writeText(item.appId);
+        vscode.window.showInformationMessage('App ID copied to the clipboard.');
+      }
     })
   );
 
@@ -239,8 +297,4 @@ export function activate(context: vscode.ExtensionContext): void {
     localMetadataWatcher.onDidDelete(refreshLocalTree)
   );
   refreshLocalTree();
-}
-
-export function deactivate(): void {
-  // cleanup if needed
 }

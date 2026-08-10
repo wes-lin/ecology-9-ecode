@@ -29,9 +29,8 @@ This is a pnpm workspace TypeScript monorepo for an Ecology 9 ecode local develo
 
 ## Development notes
 
-- Node >=22 is declared at the repo root; the SDK itself declares Node >=18 and uses global `fetch` plus `form-data` for uploads.
+- Node >=22 is declared at the repo root; the SDK itself declares Node >=18 and uses the native global `fetch`, `FormData`, and `Blob` APIs for uploads.
 - SDK tests are CommonJS `node:test` files in `packages/ecode-sdk/test` and import from `packages/ecode-sdk/dist`, so build the SDK before running an individual test file.
 - Root linting uses ESLint flat config with TypeScript ESLint and Prettier. `dist`, `out`, and `node_modules` are ignored.
-- VS Code extension settings are contributed under `ecode.baseUrl`, `ecode.username`, `ecode.password`, and `ecode.localDir`; the extension refreshes when these settings change.
-- `ecode.localDir` defaults to `src`. Download and open-local-file flows validate remote paths before writing under that local root.
-- The delete command currently prompts only for nodes marked deletable and then reports that deletion is not implemented.
+- VS Code extension environments are configured through `ecode.environments`, with the selected name stored in `ecode.activeEnvironment`; the extension refreshes when these settings change.
+- Each environment's `localDir` defaults to `./`. Download and local-file flows validate remote paths before writing under that project root.
