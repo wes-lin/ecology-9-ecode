@@ -1,9 +1,15 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { synchronizeEcodeAppConfigs } from 'ecode-sdk';
+import {
+  buildAppUpgradePackage,
+  collectEcodeAppConfigs,
+  publishAppUpgradePackage,
+  synchronizeEcodeAppConfigs,
+} from 'ecode-sdk';
 import { getActiveEcodeEnvironmentRoot } from '../config/ecodeEnvironment';
 import { readLocalTreeFile, writeLocalTreeFile, type EcodeLocalTreeItem } from '../config/ecodeLocalTree';
+import { ActiveEcodeClientProvider } from '../utils/ecodeClientFactory';
 import { getErrorMessage } from '../utils/errors';
 import { createEcodeId, createLocalNodeId, isLocalNodeId } from '../utils/localNodeId';
 import { normalizeTreePath, resolveTreePath } from '../utils/pathUtils';
@@ -11,9 +17,20 @@ import { BaseEcodeTreeDataProvider, type EcodeTreeItemPresentation } from './bas
 import { EcodeNode } from './ecodeNode';
 
 export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
+  private readonly _clientProvider: ActiveEcodeClientProvider;
   private _roots: EcodeNode[] = [];
   private _loaded = false;
   private _reloadQueue: Promise<void> = Promise.resolve();
+  private _publishing = false;
+  private _publishSelectionActive = false;
+  private readonly _publishSelectionAppIds = new Set<string>();
+  private readonly _selectedPublishAppIds = new Set<string>();
+  private readonly _publishAppIdsByNode = new Map<EcodeNode, string[]>();
+
+  constructor(storageRoot: string, clientProvider = new ActiveEcodeClientProvider(storageRoot)) {
+    super();
+    this._clientProvider = clientProvider;
+  }
 
   async refresh(): Promise<void> {
     this._loaded = false;
@@ -57,6 +74,26 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
         arguments: [element],
       },
     };
+  }
+
+  getTreeItem(element: EcodeNode): vscode.TreeItem {
+    const item = super.getTreeItem(element);
+    if (this._publishSelectionActive) {
+      item.contextValue = 'localPublishSelection';
+      item.command = undefined;
+    }
+    const appIds = this._getPublishAppIds(element);
+    if (appIds.length === 0) return item;
+
+    const selectedCount = appIds.filter((appId) => this._selectedPublishAppIds.has(appId)).length;
+    item.checkboxState =
+      selectedCount === appIds.length ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked;
+
+    const isApp = Boolean(element.appId && this._publishSelectionAppIds.has(element.appId));
+    if (!isApp) {
+      item.description = selectedCount > 0 ? `${selectedCount}/${appIds.length} selected` : `${appIds.length} apps`;
+    }
+    return item;
   }
 
   async getChildren(element?: EcodeNode): Promise<EcodeNode[]> {
@@ -270,6 +307,114 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     await this.refresh();
   }
 
+  get isPublishSelectionActive(): boolean {
+    return this._publishSelectionActive;
+  }
+
+  async startPublishAppsSelection(): Promise<boolean> {
+    if (this._publishing) {
+      vscode.window.showWarningMessage('Local eCode publish is already running.');
+      return false;
+    }
+    if (this._publishSelectionActive) return true;
+
+    await this._ensureLoaded();
+    this._selectedPublishAppIds.clear();
+    this._rebuildPublishSelectionIndex();
+    if (this._publishSelectionAppIds.size === 0) {
+      vscode.window.showInformationMessage('No local eCode apps are available to publish.');
+      return false;
+    }
+
+    this._publishSelectionActive = true;
+    await vscode.commands.executeCommand('setContext', 'ecodeLocalExplorer.publishSelection', true);
+    this._onDidChangeTreeData.fire();
+    return true;
+  }
+
+  async cancelPublishAppsSelection(): Promise<void> {
+    if (!this._publishSelectionActive) return;
+    this._publishSelectionActive = false;
+    this._publishSelectionAppIds.clear();
+    this._selectedPublishAppIds.clear();
+    this._publishAppIdsByNode.clear();
+    await vscode.commands.executeCommand('setContext', 'ecodeLocalExplorer.publishSelection', false);
+    this._onDidChangeTreeData.fire();
+  }
+
+  handlePublishCheckboxChange(items: ReadonlyArray<[EcodeNode, vscode.TreeItemCheckboxState]>): void {
+    if (!this._publishSelectionActive) return;
+    for (const [element, state] of items) {
+      const appIds = this._getPublishAppIds(element);
+      for (const appId of appIds) {
+        if (state === vscode.TreeItemCheckboxState.Checked) this._selectedPublishAppIds.add(appId);
+        else this._selectedPublishAppIds.delete(appId);
+      }
+    }
+    this._onDidChangeTreeData.fire();
+  }
+
+  async publishSelectedApps(): Promise<boolean> {
+    if (!this._publishSelectionActive) return false;
+    if (this._publishing) {
+      vscode.window.showWarningMessage('Local eCode publish is already running.');
+      return false;
+    }
+
+    const projectRoot = this._getEnvironmentRoot();
+    const tree = (await readLocalTreeFile(this._getTreePath())) || [];
+    const appConfigs = collectEcodeAppConfigs(tree);
+    const appConfigsById = new Map(appConfigs.map((app) => [app.appId, app]));
+    const selectedAppIds = Array.from(this._selectedPublishAppIds).filter((appId) => appConfigsById.has(appId));
+    if (selectedAppIds.length === 0) {
+      vscode.window.showWarningMessage('Select at least one local eCode app in the Local view.');
+      return false;
+    }
+
+    const confirmation = await vscode.window.showWarningMessage(
+      `Publish ${selectedAppIds.length} local eCode app(s) to the active environment?`,
+      { modal: true },
+      'Publish'
+    );
+    if (confirmation !== 'Publish') return false;
+
+    await this.cancelPublishAppsSelection();
+
+    this._publishing = true;
+    try {
+      const client = this._getClient();
+      const publishedAppCount = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: 'Publishing local eCode apps',
+          cancellable: false,
+        },
+        async (progress) => {
+          progress.report({ message: 'Building app packages...' });
+          const outputDirectory = this._prepareAppUpgradeOutputDirectory(projectRoot);
+          const packageResult = await buildAppUpgradePackage({
+            projectRoot,
+            apps: selectedAppIds,
+            appConfigs,
+            outputDirectory,
+          });
+
+          progress.report({ message: `Uploading and importing ${packageResult.plan.apps.length} app(s)...` });
+          const publishResult = await publishAppUpgradePackage(
+            client,
+            packageResult.archivePath,
+            packageResult.plan.apps
+          );
+          return publishResult.appIds.length;
+        }
+      );
+      vscode.window.showInformationMessage(`Published ${publishedAppCount} local eCode app(s).`);
+      return true;
+    } finally {
+      this._publishing = false;
+    }
+  }
+
   async renameItem(element: EcodeNode): Promise<void> {
     const extension = this._getNodeFileExtension(element);
     const kind = this._getNodeKindLabel(element);
@@ -353,6 +498,34 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     const items = (await readLocalTreeFile(this._getTreePath())) || [];
     this._roots = this._mapTreeItems(items);
     this._loaded = true;
+    if (this._publishSelectionActive) this._rebuildPublishSelectionIndex();
+  }
+
+  private _getPublishAppIds(element: EcodeNode): string[] {
+    if (!this._publishSelectionActive || element.type !== 'folder') return [];
+    return this._publishAppIdsByNode.get(element) || [];
+  }
+
+  private _rebuildPublishSelectionIndex(): void {
+    this._publishSelectionAppIds.clear();
+    this._publishAppIdsByNode.clear();
+
+    const indexNode = (element: EcodeNode): string[] => {
+      const appIds = new Set<string>();
+      if (element.appId) appIds.add(element.appId);
+      for (const child of element.children || []) {
+        for (const appId of indexNode(child)) appIds.add(appId);
+      }
+      const indexedAppIds = Array.from(appIds);
+      this._publishAppIdsByNode.set(element, indexedAppIds);
+      for (const appId of indexedAppIds) this._publishSelectionAppIds.add(appId);
+      return indexedAppIds;
+    };
+
+    for (const root of this._roots) indexNode(root);
+    for (const appId of this._selectedPublishAppIds) {
+      if (!this._publishSelectionAppIds.has(appId)) this._selectedPublishAppIds.delete(appId);
+    }
   }
 
   private _getContextValue(element: EcodeNode): string {
@@ -488,8 +661,26 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     await synchronizeEcodeAppConfigs(treePath);
   }
 
+  private _prepareAppUpgradeOutputDirectory(projectRoot: string): string {
+    const outputDirectory = path.join(projectRoot, 'dist', 'app-upgrade');
+    fs.mkdirSync(outputDirectory, { recursive: true });
+    for (const name of fs.readdirSync(outputDirectory)) {
+      fs.rmSync(path.join(outputDirectory, name), {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    }
+    return outputDirectory;
+  }
+
   private _getEnvironmentRoot(): string {
     return getActiveEcodeEnvironmentRoot(vscode.workspace.getConfiguration('ecode'));
+  }
+
+  private _getClient() {
+    return this._clientProvider.get();
   }
 
   private _getSourceRoot(): string {

@@ -1,16 +1,16 @@
-import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import { URL } from 'node:url';
 import crypto from 'node:crypto';
-import FormData from 'form-data';
+import { throwIfEcodeApiFailed } from './api-response';
 import { EcodeLogger, type EcodeLoggerLike, type EcodeLoggerOptions, NOOP_LOGGER } from './logger';
-import { RemoteTreeItem } from './type';
+import type { RemoteTreeItem } from './type';
 import { compileJavaScript } from './compiler';
 import { downloadEcode, type EcodeDownloadOptions, type EcodeDownloadResult } from './downloader';
 
 type PrimitiveParam = string | number | boolean | null | undefined;
 type Params = Record<string, PrimitiveParam>;
-type RequestBody = BodyInit | FormData | Params;
+type RequestBody = BodyInit | Params;
 
 type RequestOptions = {
   method?: string;
@@ -24,6 +24,16 @@ type RsaInfo = {
   rsa_code: string;
   rsa_flag: string;
 };
+
+export type EcodeImportFlag = 'y' | 'n';
+
+export type EcodeImportAppOperation = {
+  cover?: EcodeImportFlag;
+  autoRelease?: EcodeImportFlag;
+  coverConfig?: EcodeImportFlag;
+};
+
+export type EcodeImportAppOperations = Record<string, EcodeImportAppOperation>;
 
 export type EcodeClientOptions = {
   baseUrl?: string;
@@ -91,6 +101,13 @@ function getSetCookieHeaders(headers: Headers): string[] {
 
   const single = headers.get('set-cookie');
   return single ? [single] : [];
+}
+
+function createFileUploadForm(localPath: string, fieldName: string): FormData {
+  const form = new FormData();
+  const fileContents = new Uint8Array(readFileSync(localPath));
+  form.append(fieldName, new Blob([fileContents]), basename(localPath));
+  return form;
 }
 
 export class CookieJar {
@@ -402,30 +419,54 @@ export class EcodeClient {
     });
   }
 
-  async uploadFile(localPath: string, folderId: string): Promise<Response> {
-    const form = new FormData();
-    form.append('file', createReadStream(localPath));
-    return this._post(`/api/ecode/resource/upload?folderId=${folderId}`, form, form.getHeaders());
+  async uploadResource(localPath: string, folderId: string): Promise<Response> {
+    return this._post(`/api/ecode/resource/upload?folderId=${folderId}`, createFileUploadForm(localPath, 'file'));
   }
 
-  async cacheMonitor() {
-    return this._get('/commcache/cacheMonitor.jsp');
+  async uploadFile(localPath: string): Promise<Response> {
+    return this._post('/api/doc/upload/uploadFile', createFileUploadForm(localPath, 'Filedata'));
   }
 
-  async delPlugin(folderId: string) {
-    return this._get(`/api/ecode/delPlugin?folderId=${folderId}`);
-  }
-
-  async scanUpgradePackage() {
-    return this._get('/api/ecode/scanUpgradePackage');
-  }
-
-  async upgradePackages(appIds: string[]) {
-    await this.cacheMonitor();
-    for (const appId of appIds) {
-      await this.delPlugin(appId);
+  async importApps(
+    fileId: string | number,
+    appIdsOrOperations: string[] | EcodeImportAppOperations
+  ): Promise<Response> {
+    if (fileId === '' || fileId === null || fileId === undefined) {
+      throw new Error('fileId is required.');
     }
-    await this.scanUpgradePackage();
+
+    const entries: Array<[string, EcodeImportAppOperation]> = Array.isArray(appIdsOrOperations)
+      ? appIdsOrOperations.map((appId) => [appId, {}])
+      : Object.entries(appIdsOrOperations || {});
+    if (entries.length === 0) {
+      throw new Error('At least one eCode app is required for import.');
+    }
+
+    const impOp: Record<string, Required<EcodeImportAppOperation>> = {};
+    for (const [appId, operation] of entries) {
+      if (typeof appId !== 'string' || !appId.trim()) {
+        throw new Error('Each imported eCode app must have a non-empty app id.');
+      }
+      if (!operation || typeof operation !== 'object' || Array.isArray(operation)) {
+        throw new Error(`Invalid import operation for eCode app "${appId}".`);
+      }
+      for (const field of ['cover', 'autoRelease', 'coverConfig'] as const) {
+        const value = operation[field];
+        if (value !== undefined && value !== 'y' && value !== 'n') {
+          throw new Error(`Invalid import operation "${field}" for eCode app "${appId}".`);
+        }
+      }
+      impOp[appId] = {
+        cover: operation.cover || 'y',
+        autoRelease: operation.autoRelease || 'y',
+        coverConfig: operation.coverConfig || 'n',
+      };
+    }
+
+    return this._post('/api/ecode/type/importDemo', {
+      fileId,
+      impOp: JSON.stringify(impOp),
+    });
   }
 
   _buildUrl(path: string, params?: Params): string {
@@ -471,11 +512,6 @@ export class EcodeClient {
     return code === '002' && resData.msg === '登录信息超时';
   }
 
-  _throwIfApiFailed(resData: unknown): void {
-    if (!isRecord(resData) || resData.api_status !== false) return;
-    throw new Error(typeof resData.msg === 'string' && resData.msg ? resData.msg : 'Request failed');
-  }
-
   async _request(path: string, options: RequestOptions = {}): Promise<Response> {
     const url = this._buildUrl(path, options.params);
     const { headers, body } = this._buildFetchOptions(options);
@@ -494,33 +530,35 @@ export class EcodeClient {
     const duration = Date.now() - t0;
 
     // 检测会话失效：克隆 response 以便正文可二次读取
-    const cloned = res.clone();
+    let resData: unknown;
     try {
-      const resData = await cloned.json();
+      resData = await res.clone().json();
       this.logger.logResponse(method, url, res.status, resData, duration);
-      this._throwIfApiFailed(resData);
-
-      if (this._isSessionExpired(resData)) {
-        this.logger.logSessionExpired(url);
-        await this.login();
-        // 用新 cookie 重试一次
-        const { headers: retryHeaders, body: retryBody } = this._buildFetchOptions(options);
-        this.logger.logRequest(method, url, retryHeaders);
-        const t1 = Date.now();
-        const retryRes = await fetch(url, { method, headers: retryHeaders, body: retryBody });
-        const retryCloned = retryRes.clone();
-        try {
-          const retryData = await retryCloned.json();
-          this.logger.logResponse(method, url, retryRes.status, retryData, Date.now() - t1);
-        } catch {
-          this.logger.logResponse(method, url, retryRes.status, null, Date.now() - t1);
-        }
-        return retryRes;
-      }
     } catch {
       // 非 JSON 响应（如文件下载），记录基本信息即可
       this.logger.logResponse(method, url, res.status, null, duration);
     }
+
+    if (this._isSessionExpired(resData)) {
+      this.logger.logSessionExpired(url);
+      await this.login();
+      // 用新 cookie 重试一次
+      const { headers: retryHeaders, body: retryBody } = this._buildFetchOptions(options);
+      this.logger.logRequest(method, url, retryHeaders);
+      const t1 = Date.now();
+      const retryRes = await fetch(url, { method, headers: retryHeaders, body: retryBody });
+      let retryData: unknown;
+      try {
+        retryData = await retryRes.clone().json();
+        this.logger.logResponse(method, url, retryRes.status, retryData, Date.now() - t1);
+      } catch {
+        this.logger.logResponse(method, url, retryRes.status, null, Date.now() - t1);
+      }
+      throwIfEcodeApiFailed(retryData);
+      return retryRes;
+    }
+
+    throwIfEcodeApiFailed(resData);
 
     return res;
   }

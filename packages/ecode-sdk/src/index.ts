@@ -1,6 +1,21 @@
-export { RemoteTreeItem } from './type';
-export { collectEcodeAppConfigs, synchronizeEcodeAppConfigs, type EcodeAppConfig } from './app-config';
-export { CookieJar, EcodeClient, type EcodeClientOptions } from './client';
+export type { RemoteTreeItem } from './type';
+export {
+  collectEcodeAppConfigs,
+  loadEcodeAppConfigs,
+  readEcodeAppConfig,
+  synchronizeEcodeAppConfigs,
+  validateEcodeAppConfig,
+  type EcodeAppConfig,
+  type LoadEcodeAppConfigsOptions,
+} from './app-config';
+export {
+  CookieJar,
+  EcodeClient,
+  type EcodeClientOptions,
+  type EcodeImportAppOperation,
+  type EcodeImportAppOperations,
+  type EcodeImportFlag,
+} from './client';
 export {
   compileJavaScript,
   compileJavaScriptFile,
@@ -25,4 +40,17 @@ export {
   type EcodeLoggerOptions,
   type LogLevel,
 } from './logger';
+export {
+  publishAppUpgradePackage,
+  type EcodeAppPackagePublisher,
+  type EcodeAppPackagePublishResult,
+  type EcodePublishApp,
+} from './publisher';
 export { getEcodeAppId } from './tree-utils';
+export {
+  buildAppUpgradePackage,
+  type EcodeAppUpgradePackageOptions,
+  type EcodeUpgradeApp,
+  type EcodeUpgradePackageResult,
+  type EcodeUpgradePlan,
+} from './upgrade';

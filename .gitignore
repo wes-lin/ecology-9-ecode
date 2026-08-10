@@ -7,6 +7,7 @@ releases
 .DS_Store
 *.log
 .vscode-test/
+.pnpm-store/
 .env
 package-lock.json
 yarn.lock

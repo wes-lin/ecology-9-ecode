@@ -8,6 +8,7 @@ type EnvironmentManagerMessage = {
   environments?: unknown;
   activeIndex?: unknown;
   index?: unknown;
+  name?: unknown;
 };
 
 export class EcodeEnvironmentManager implements vscode.Disposable {
@@ -65,6 +66,12 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
       case 'browseLocalDir':
         await this.browseLocalDirectory(message.index);
         break;
+      case 'confirmDelete':
+        await this.confirmDelete(message.index, message.name);
+        break;
+      case 'confirmDiscard':
+        await this.confirmDiscard();
+        break;
     }
   }
 
@@ -87,8 +94,12 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
       const activeEnvironment = environments[activeIndex] ?? environments[0];
       const config = vscode.workspace.getConfiguration('ecode');
 
-      await config.update('environments', environments, vscode.ConfigurationTarget.Global);
-      await config.update('activeEnvironment', activeEnvironment?.name ?? '', vscode.ConfigurationTarget.Global);
+      await config.update('environments', environments, this.getConfigurationTarget(config, 'environments'));
+      await config.update(
+        'activeEnvironment',
+        activeEnvironment?.name ?? '',
+        this.getConfigurationTarget(config, 'activeEnvironment')
+      );
       await this.panel?.webview.postMessage({
         type: 'saved',
         environments,
@@ -113,7 +124,7 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
         baseUrl: this.stringValue(record.baseUrl).replace(/\/+$/, ''),
         username: this.stringValue(record.username),
         password: this.stringValue(record.password),
-        localDir: this.stringValue(record.localDir) || 'src',
+        localDir: this.stringValue(record.localDir) || './',
       };
 
       if (!environment.name) throw new Error(`Environment ${index + 1} needs a name.`);
@@ -145,6 +156,17 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
     return typeof value === 'string' ? value.trim() : '';
   }
 
+  private getConfigurationTarget(
+    config: vscode.WorkspaceConfiguration,
+    key: 'environments' | 'activeEnvironment'
+  ): vscode.ConfigurationTarget {
+    const inspection = config.inspect(key);
+    if (inspection?.workspaceFolderValue !== undefined) return vscode.ConfigurationTarget.WorkspaceFolder;
+    if (inspection?.workspaceValue !== undefined) return vscode.ConfigurationTarget.Workspace;
+    if (inspection?.globalValue !== undefined) return vscode.ConfigurationTarget.Global;
+    return vscode.ConfigurationTarget.Global;
+  }
+
   private async browseLocalDirectory(rawIndex: unknown): Promise<void> {
     const index = typeof rawIndex === 'number' ? rawIndex : -1;
     if (index < 0) return;
@@ -166,6 +188,30 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
       if (!relativePath.startsWith('..') && !path.isAbsolute(relativePath)) localDir = relativePath || '.';
     }
     await this.panel.webview.postMessage({ type: 'localDir', index, localDir });
+  }
+
+  private async confirmDelete(rawIndex: unknown, rawName: unknown): Promise<void> {
+    const index = typeof rawIndex === 'number' ? rawIndex : -1;
+    if (index < 0 || !this.panel) return;
+
+    const name = this.stringValue(rawName) || 'this environment';
+    const confirmation = await vscode.window.showWarningMessage(
+      `Delete "${name}"?`,
+      { modal: true },
+      'Delete'
+    );
+    if (confirmation === 'Delete') await this.panel.webview.postMessage({ type: 'deleteConfirmed', index });
+  }
+
+  private async confirmDiscard(): Promise<void> {
+    if (!this.panel) return;
+
+    const confirmation = await vscode.window.showWarningMessage(
+      'Discard all unsaved changes?',
+      { modal: true },
+      'Discard'
+    );
+    if (confirmation === 'Discard') await this.panel.webview.postMessage({ type: 'discardConfirmed' });
   }
 
   private getHtml(): string {
@@ -434,7 +480,16 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
         const down = actionButton('↓', 'Move down', () => moveEnvironment(index, 1));
         up.disabled = index === 0;
         down.disabled = index === environments.length - 1;
-        actions.append(up, down, actionButton('×', 'Delete environment', () => removeEnvironment(index), 'danger'));
+        actions.append(
+          up,
+          down,
+          actionButton(
+            '×',
+            'Delete environment',
+            () => vscode.postMessage({ command: 'confirmDelete', index, name: environment.name }),
+            'danger'
+          )
+        );
         header.append(activeControl, actions);
         const fields = document.createElement('div');
         fields.className = 'fields';
@@ -462,7 +517,7 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
         });
         createField(card, 'Local directory', 'localDir', {
           wide: true,
-          placeholder: 'src',
+          placeholder: './',
           hint: 'Relative paths are resolved from the current workspace.',
           action: () => {
             const browse = document.createElement('button');
@@ -487,8 +542,7 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
     }
 
     function removeEnvironment(index) {
-      const name = environments[index].name || 'this environment';
-      if (!confirm('Delete "' + name + '"?')) return;
+      if (index < 0 || index >= environments.length) return;
       environments.splice(index, 1);
       if (activeIndex === index) activeIndex = Math.min(index, environments.length - 1);
       else if (activeIndex > index) activeIndex--;
@@ -498,7 +552,7 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
     }
 
     document.getElementById('add').addEventListener('click', () => {
-      environments.push({ name: uniqueName(), baseUrl: '', username: '', password: '', localDir: 'src' });
+      environments.push({ name: uniqueName(), baseUrl: '', username: '', password: '', localDir: './' });
       if (environments.length === 1) activeIndex = 0;
       markDirty();
       render();
@@ -507,7 +561,8 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
     });
 
     document.getElementById('reload').addEventListener('click', () => {
-      if (!dirty || confirm('Discard all unsaved changes?')) vscode.postMessage({ command: 'ready' });
+      if (!dirty) vscode.postMessage({ command: 'ready' });
+      else vscode.postMessage({ command: 'confirmDiscard' });
     });
 
     form.addEventListener('submit', (event) => {
@@ -534,6 +589,10 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
         environments[message.index].localDir = message.localDir;
         markDirty();
         render();
+      } else if (message.type === 'deleteConfirmed') {
+        removeEnvironment(message.index);
+      } else if (message.type === 'discardConfirmed') {
+        vscode.postMessage({ command: 'ready' });
       } else if (message.type === 'error') {
         setStatus(message.message, true);
       }

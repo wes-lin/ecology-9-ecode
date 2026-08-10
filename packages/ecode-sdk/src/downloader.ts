@@ -1,11 +1,9 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import type { RemoteTreeItem } from './type';
-import { isTreeContainer, normalizeTreePath } from './tree-utils';
+import { isTreeContainer, normalizeTreePath, walkEcodeTree, type EcodeTreeItem } from './tree-utils';
 
-export type EcodeTreeItem = Omit<RemoteTreeItem, 'children'> & {
-  children?: EcodeTreeItem[];
-};
+export type { EcodeTreeItem } from './tree-utils';
 
 export type EcodeDownloadPlan = {
   /**
@@ -111,20 +109,10 @@ async function loadCompleteTree(
 
 function collectRemoteFiles(items: EcodeTreeItem[]): RemoteFile[] {
   const files: RemoteFile[] = [];
-
-  const visit = (nodes: EcodeTreeItem[], parentPath: string): void => {
-    for (const item of nodes) {
-      const name = requireNodeValue(item, 'name');
-      const relativePath = normalizeTreePath(parentPath ? `${parentPath}/${name}` : name);
-      if (isTreeContainer(item)) {
-        visit(item.children || [], relativePath);
-      } else {
-        files.push({ item, relativePath });
-      }
-    }
-  };
-
-  visit(items, '');
+  walkEcodeTree(items, ({ node, relativePath }) => {
+    requireNodeValue(node, 'name');
+    if (!isTreeContainer(node)) files.push({ item: node, relativePath });
+  });
   return files;
 }
 

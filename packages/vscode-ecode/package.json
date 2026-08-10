@@ -3,7 +3,7 @@
   "displayName": "eCode Explorer",
   "description": "Browse and download Ecology 9 ecode files from VS Code",
   "icon": "assets/ecode.png",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "publisher": "ecode-dev-assistant",
   "repository": {
     "url": "https://github.com/wes-lin/ecology-9-ecode/tree/main/packages/vscode-ecode"
@@ -54,7 +54,8 @@
               },
               "localDir": {
                 "type": "string",
-                "description": "Local directory to download ecode source files"
+                "default": "./",
+                "description": "Local project directory. Relative paths are resolved from the current workspace."
               }
             }
           }
@@ -94,7 +95,7 @@
         "command": "ecode.switchEnvironment",
         "title": "Switch Environment",
         "icon": "$(server-environment)",
-        "enablement": "!ecodeExplorer.busy"
+        "enablement": "!ecodeExplorer.busy && !ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.refresh",
@@ -112,13 +113,37 @@
         "command": "ecode.download",
         "title": "Download",
         "icon": "$(cloud-download)",
-        "enablement": "!ecodeExplorer.busy"
+        "enablement": "!ecodeExplorer.busy && !ecodeLocalExplorer.publishSelection"
+      },
+      {
+        "command": "ecode.local.publishApps",
+        "title": "Upload Apps",
+        "icon": "$(cloud-upload)",
+        "enablement": "!ecodeExplorer.busy && !ecodeLocalExplorer.publishSelection"
+      },
+      {
+        "command": "ecode.local.confirmPublishApps",
+        "title": "Publish Apps",
+        "icon": "$(check)",
+        "enablement": "!ecodeExplorer.busy && ecodeLocalExplorer.publishSelection"
+      },
+      {
+        "command": "ecode.local.cancelPublishApps",
+        "title": "Cancel App Selection",
+        "icon": "$(close)",
+        "enablement": "ecodeLocalExplorer.publishSelection"
+      },
+      {
+        "command": "ecode.showAppId",
+        "title": "Show App ID",
+        "icon": "$(symbol-key)",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.compareWithRemote",
         "title": "Compare with Remote",
         "icon": "$(diff)",
-        "enablement": "!ecodeExplorer.busy"
+        "enablement": "!ecodeExplorer.busy && !ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.deleteItem",
@@ -131,7 +156,7 @@
         "title": "Manage Environments",
         "category": "eCode",
         "icon": "$(gear)",
-        "enablement": "!ecodeExplorer.busy"
+        "enablement": "!ecodeExplorer.busy && !ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.viewFile",
@@ -207,106 +232,137 @@
         "command": "ecode.local.refresh",
         "title": "Refresh Local Tree",
         "icon": "$(refresh)",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.local.openFile",
         "title": "Open Local File",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.local.createNewApp",
         "title": "New Local App",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.local.createNewType",
         "title": "New Local Type",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.local.createNewFolder",
         "title": "New Local Folder",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.local.createNewJs",
         "title": "New Local JS",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.local.createNewCss",
         "title": "New Local CSS",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.local.createNewMd",
         "title": "New Local Markdown",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.local.uploadResource",
         "title": "Add Local Resource",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.local.renameItem",
         "title": "Rename Local Item",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.local.deleteItem",
         "title": "Delete Local Item",
         "icon": "$(trash)",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.local.release",
         "title": "Set Local App Released",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.local.cancelRelease",
         "title": "Set Local App Unreleased",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.local.setPreload",
         "title": "Set Local File Preload",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.local.cancelPreload",
         "title": "Cancel Local File Preload",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
         "command": "ecode.local.setPreloadOrder",
         "title": "Set Local App Preload Order",
-        "category": "eCode"
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
       }
     ],
     "menus": {
       "view/title": [
         {
           "command": "ecode.switchEnvironment",
-          "when": "view == ecodeLocalExplorer",
+          "when": "view == ecodeLocalExplorer && !ecodeLocalExplorer.publishSelection",
           "group": "navigation@0"
         },
         {
           "command": "ecode.local.refresh",
-          "when": "view == ecodeLocalExplorer",
+          "when": "view == ecodeLocalExplorer && !ecodeLocalExplorer.publishSelection",
           "group": "navigation@1"
         },
         {
           "command": "ecode.download",
-          "when": "view == ecodeLocalExplorer && !ecodeExplorer.busy",
+          "when": "view == ecodeLocalExplorer && !ecodeExplorer.busy && !ecodeLocalExplorer.publishSelection",
           "group": "navigation@2"
         },
         {
-          "command": "ecode.openSettings",
-          "when": "view == ecodeLocalExplorer",
+          "command": "ecode.local.publishApps",
+          "when": "view == ecodeLocalExplorer && !ecodeExplorer.busy && !ecodeLocalExplorer.publishSelection",
           "group": "navigation@3"
+        },
+        {
+          "command": "ecode.local.confirmPublishApps",
+          "when": "view == ecodeLocalExplorer && !ecodeExplorer.busy && ecodeLocalExplorer.publishSelection",
+          "group": "navigation@3"
+        },
+        {
+          "command": "ecode.local.cancelPublishApps",
+          "when": "view == ecodeLocalExplorer && ecodeLocalExplorer.publishSelection",
+          "group": "navigation@4"
+        },
+        {
+          "command": "ecode.openSettings",
+          "when": "view == ecodeLocalExplorer && !ecodeLocalExplorer.publishSelection",
+          "group": "navigation@5"
         },
         {
           "command": "ecode.refresh",
@@ -329,6 +385,11 @@
           "command": "ecode.viewFile",
           "when": "view == ecodeExplorer && viewItem =~ /canViewRemote/",
           "group": "inline@0"
+        },
+        {
+          "command": "ecode.showAppId",
+          "when": "view == ecodeExplorer && viewItem =~ /canShowAppId/",
+          "group": "navigation@1"
         },
         {
           "command": "ecode.compareWithRemote",
@@ -409,6 +470,11 @@
           "command": "ecode.local.openFile",
           "when": "view == ecodeLocalExplorer && viewItem =~ /localFile/",
           "group": "inline@0"
+        },
+        {
+          "command": "ecode.showAppId",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localApp/ && !ecodeLocalExplorer.publishSelection",
+          "group": "navigation@1"
         },
         {
           "command": "ecode.local.refresh",
