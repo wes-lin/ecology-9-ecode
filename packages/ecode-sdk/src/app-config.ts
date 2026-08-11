@@ -43,6 +43,10 @@ function relativeDescendantPath(parentPath: string, candidatePath: string): stri
   return candidatePath.startsWith(prefix) ? candidatePath.slice(prefix.length) : undefined;
 }
 
+function sortEcodePaths(paths: string[]): string[] {
+  return paths.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+}
+
 function getAppConfigFileName(nodeId: string): string {
   if (
     !nodeId ||
@@ -86,7 +90,7 @@ function collectEcodeAppConfigEntries(items: EcodeTreeItem[]): EcodeAppConfigEnt
         .map((file) => ({ file, relativePath: relativeDescendantPath(app.path, file.path) }))
         .filter((entry): entry is { file: IndexedTreeItem; relativePath: string } => entry.relativePath !== undefined);
       const collectPaths = (predicate: (item: EcodeTreeItem) => boolean): string[] =>
-        descendants.filter(({ file }) => predicate(file.item)).map(({ relativePath }) => relativePath);
+        sortEcodePaths(descendants.filter(({ file }) => predicate(file.item)).map(({ relativePath }) => relativePath));
 
       return {
         nodeId: app.item.id || '',
