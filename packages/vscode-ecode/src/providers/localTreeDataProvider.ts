@@ -543,6 +543,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
       } else {
         values.push('localCanCreateFolder');
       }
+      if (this._canCreateCodeFile(element)) values.push('localCanCreateFile');
     } else if (element.type === 'file') {
       values.push('localFile');
       if (element.id && !isLocalNodeId(element.id)) {

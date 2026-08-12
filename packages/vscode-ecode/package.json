@@ -3,7 +3,7 @@
   "displayName": "eCode Explorer",
   "description": "Browse and download Ecology 9 ecode files from VS Code",
   "icon": "assets/ecode.png",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "publisher": "ecode-dev-assistant",
   "repository": {
     "url": "https://github.com/wes-lin/ecology-9-ecode/tree/main/packages/vscode-ecode"
@@ -498,17 +498,17 @@
         },
         {
           "command": "ecode.local.createNewJs",
-          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanCreateChild/",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanCreateFile/",
           "group": "new@3"
         },
         {
           "command": "ecode.local.createNewCss",
-          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanCreateChild/",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanCreateFile/",
           "group": "new@4"
         },
         {
           "command": "ecode.local.createNewMd",
-          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanCreateChild/",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanCreateFile/",
           "group": "new@5"
         },
         {
