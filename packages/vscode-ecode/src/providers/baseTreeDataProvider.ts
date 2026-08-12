@@ -121,6 +121,22 @@ export abstract class BaseEcodeTreeDataProvider implements vscode.TreeDataProvid
     return undefined;
   }
 
+  protected _canCreateCodeFile(element: EcodeNode): boolean {
+    if (element.type !== 'folder' || !this._findContainingAppNode(element)) return false;
+
+    let current: EcodeNode | undefined = element;
+    while (current) {
+      if (
+        ['config', 'jar', 'resource', 'non-code'].includes(current.attribute) ||
+        ['jar', 'resource'].includes(current.treeType)
+      ) {
+        return false;
+      }
+      current = current.parent;
+    }
+    return true;
+  }
+
   protected _childPath(parent: EcodeNode, name: string): string {
     return normalizeTreePath(`${parent.remotePath}/${name}`);
   }

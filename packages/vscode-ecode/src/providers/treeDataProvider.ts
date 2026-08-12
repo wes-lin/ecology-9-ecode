@@ -546,6 +546,9 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
       if (element.attribute === 'resource') {
         values.push('canUploadResource');
       }
+      if (this._canCreateCodeFile(element)) {
+        values.push('canCreateNewJs', 'canCreateNewCss', 'canCreateNewMd');
+      }
     }
     if (element.type === 'file') {
       values.push('canViewRemote');
@@ -562,7 +565,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     }
     if (element.appId) {
       values.push('canShowAppId');
-      values.push('canCreateNewFolder', 'canCreateNewJs', 'canCreateNewCss', 'canCreateNewMd');
+      values.push('canCreateNewFolder');
       if (element.deletable) {
         values.push('canSetPreloadOrder');
         if (element.appStatus === 'released') {
