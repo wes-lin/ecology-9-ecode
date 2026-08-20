@@ -1,6 +1,6 @@
 {
   "name": "ecode-sdk",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "TypeScript SDK for Ecology 9 ecode APIs",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

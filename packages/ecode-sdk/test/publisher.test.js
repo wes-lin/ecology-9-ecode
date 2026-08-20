@@ -7,6 +7,7 @@ describe('eCode app package publisher', () => {
     let uploadedPath;
     let importedFileId;
     let importOperations;
+    const preStateOrders = [];
     const client = {
       async uploadFile(archivePath) {
         uploadedPath = archivePath;
@@ -19,6 +20,9 @@ describe('eCode app package publisher', () => {
         importedFileId = fileId;
         importOperations = operations;
         return new Response('{}', { status: 200 });
+      },
+      async setPreStateOrder(appId, preStateOrder) {
+        preStateOrders.push([appId, preStateOrder]);
       },
     };
 
@@ -33,7 +37,35 @@ describe('eCode app package publisher', () => {
       'app-released': { cover: 'y', autoRelease: 'y', coverConfig: 'n' },
       'app-draft': { cover: 'y', autoRelease: 'n', coverConfig: 'n' },
     });
+    assert.deepEqual(preStateOrders, []);
     assert.deepEqual(result, { appIds: ['app-released', 'app-draft'], fileId: 846001 });
+  });
+
+  it('restores app preload order after import', async () => {
+    const calls = [];
+    const client = {
+      async uploadFile() {
+        return new Response(JSON.stringify({ data: { fileid: 846002 } }), { status: 200 });
+      },
+      async importApps() {
+        calls.push('import');
+        return new Response('{}', { status: 200 });
+      },
+      async setPreStateOrder(appId, preStateOrder) {
+        calls.push(['setPreStateOrder', appId, preStateOrder]);
+      },
+    };
+
+    await publishAppUpgradePackage(client, 'apps.zip', [
+      { appId: 'app-a', appStatus: 'released', appPreStateOrder: 1 },
+      { appId: 'app-b', appStatus: 'draft', appPreStateOrder: 20 },
+    ]);
+
+    assert.deepEqual(calls, [
+      'import',
+      ['setPreStateOrder', 'app-a', 1],
+      ['setPreStateOrder', 'app-b', 20],
+    ]);
   });
 
   it('rejects an upload response without data.fileid', async () => {

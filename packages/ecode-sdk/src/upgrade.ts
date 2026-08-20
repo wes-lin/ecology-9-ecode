@@ -97,6 +97,7 @@ type EcodeUpgradeSelectionOptions = Pick<
 export type EcodeUpgradeApp = {
   appId: string;
   appStatus: string;
+  appPreStateOrder: number;
   archive: string;
   fileCount: number;
   sourcePath: string;
@@ -559,6 +560,7 @@ function stageApp(options: {
     app: {
       appId,
       appStatus: appConfig.appStatus,
+      appPreStateOrder: appConfig.appPreStateOrder,
       archive: `${appId}/`,
       fileCount: files.length,
       sourcePath: appConfig.path,
