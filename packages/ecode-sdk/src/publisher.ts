@@ -4,11 +4,13 @@ import { getEcodeApiError } from './api-response';
 export type EcodeAppPackagePublisher = {
   uploadFile(localPath: string): Promise<Response>;
   importApps(fileId: string | number, operations: EcodeImportAppOperations): Promise<Response>;
+  setPreStateOrder?(appId: string, preStateOrder: number): Promise<unknown>;
 };
 
 export type EcodePublishApp = {
   appId: string;
   appStatus: string;
+  appPreStateOrder?: number;
 };
 
 export type EcodeAppPackagePublishResult = {
@@ -72,5 +74,14 @@ export async function publishAppUpgradePackage(
   const fileId = await readUploadedFileId(uploadResponse);
   const importResponse = await client.importApps(fileId, operations);
   if (!importResponse.ok) throw new Error(`Import failed: HTTP ${importResponse.status}.`);
+
+  const appsWithPreStateOrder = apps.filter((app) => app.appPreStateOrder !== undefined);
+  if (appsWithPreStateOrder.length > 0 && !client.setPreStateOrder) {
+    throw new Error('Published app preload order cannot be restored: client.setPreStateOrder is unavailable.');
+  }
+  for (const app of appsWithPreStateOrder) {
+    await client.setPreStateOrder!(app.appId, app.appPreStateOrder!);
+  }
+
   return { appIds, fileId };
 }
