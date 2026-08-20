@@ -3,7 +3,7 @@
   "displayName": "eCode Explorer",
   "description": "Browse and download Ecology 9 ecode files from VS Code",
   "icon": "assets/ecode.png",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "publisher": "ecode-dev-assistant",
   "repository": {
     "url": "https://github.com/wes-lin/ecology-9-ecode/tree/main/packages/vscode-ecode"
