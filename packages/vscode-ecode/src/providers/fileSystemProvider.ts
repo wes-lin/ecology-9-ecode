@@ -1,13 +1,13 @@
 import * as vscode from 'vscode';
 import type { EcodeNode } from './ecodeNode';
 import type { EcodeTreeDataProvider } from './treeDataProvider';
-
+// ── 文件系统操作 ───────────────────────────────────────────────────────────
 /**
  * EcodeFileSystemProvider
  *
  * 将远程文件映射为 VSCode 虚拟文件系统（scheme: ecode），使面包屑、
- * 资源管理器等原生功能可用。只读：readFile / stat / readDirectory，
- * 不支持写入。
+ * 资源管理器等原生功能可用。远程代码文件可编辑，保存时由
+ * EcodeTreeDataProvider 将内容写回远程。
  */
 export class EcodeFileSystemProvider implements vscode.FileSystemProvider {
   private tree: EcodeTreeDataProvider;
@@ -30,8 +30,15 @@ export class EcodeFileSystemProvider implements vscode.FileSystemProvider {
     const filePath = uri.path;
 
     // 文件内容缓存中有记录 → 文件
-    if (this.tree._fileContents.has(uri.path)) {
-      return { type: vscode.FileType.File, ctime: Date.now(), mtime: Date.now(), size: -1 };
+    const content = this.tree.getRemoteFileContent(uri);
+    if (content !== undefined) {
+      return {
+        type: vscode.FileType.File,
+        ctime: Date.now(),
+        mtime: Date.now(),
+        size: content.byteLength,
+        permissions: this.tree.isRemoteFileWritable(uri) ? undefined : vscode.FilePermission.Readonly,
+      };
     }
 
     // 尝试从已加载的树节点判断是否为文件夹
@@ -41,7 +48,13 @@ export class EcodeFileSystemProvider implements vscode.FileSystemProvider {
     }
 
     // 兜底：未知路径当作文件（打开时会触发 viewFile 加载）
-    return { type: vscode.FileType.File, ctime: Date.now(), mtime: Date.now(), size: -1 };
+    return {
+      type: vscode.FileType.File,
+      ctime: Date.now(),
+      mtime: Date.now(),
+      size: -1,
+      permissions: vscode.FilePermission.Readonly,
+    };
   }
 
   /**
@@ -50,7 +63,7 @@ export class EcodeFileSystemProvider implements vscode.FileSystemProvider {
    * @returns 文件内容字节
    */
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
-    const content = this.tree._fileContents.get(uri.path);
+    const content = this.tree.getRemoteFileContent(uri);
     if (content !== undefined) {
       return content;
     }
@@ -76,8 +89,17 @@ export class EcodeFileSystemProvider implements vscode.FileSystemProvider {
     return { dispose() {} };
   }
 
-  async writeFile(): Promise<void> {
-    throw new Error('Read-only filesystem');
+  async writeFile(
+    uri: vscode.Uri,
+    content: Uint8Array,
+    _options: { create: boolean; overwrite: boolean }
+  ): Promise<void> {
+    if (!this.tree.isRemoteFileWritable(uri)) {
+      throw vscode.FileSystemError.NoPermissions('This remote eCode file is read-only.');
+    }
+
+    await this.tree.updateRemoteFile(uri, content);
+    this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);
   }
 
   async delete(): Promise<void> {

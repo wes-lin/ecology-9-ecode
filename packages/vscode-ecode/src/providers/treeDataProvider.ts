@@ -24,19 +24,21 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
   private readonly _output = vscode.window.createOutputChannel('eCode');
   private readonly _clientProvider: ActiveEcodeClientProvider;
 
-  // 文件内容缓存：uri → 内容字节
-  _fileContents = new Map<string, Uint8Array>();
+  // 文件内容缓存：完整 URI → 内容字节。query 不同的 diff 文档不会相互覆盖。
+  private readonly _fileContents = new Map<string, Uint8Array>();
+  // 只有从 Remote 树直接打开的可编辑代码文件才会登记在此。
+  private readonly _writableRemoteFiles = new Map<string, EcodeNode>();
   private _fsRegistration: vscode.Disposable;
 
   constructor(storageRoot: string, clientProvider = new ActiveEcodeClientProvider(storageRoot)) {
     super();
     this._clientProvider = clientProvider;
 
-    // 注册只读 FileSystemProvider（提供面包屑等原生功能）
+    // 注册可写 FileSystemProvider；具体 URI 是否可写由 stat/writeFile 判断。
     const fileSystemProvider = new EcodeFileSystemProvider(this);
     this._fsRegistration = vscode.workspace.registerFileSystemProvider('ecode', fileSystemProvider, {
       isCaseSensitive: false,
-      isReadonly: true,
+      isReadonly: false,
     });
   }
 
@@ -49,6 +51,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     this._clientProvider.clear();
     this.rootItems = [];
     this._fileContents.clear();
+    this._writableRemoteFiles.clear();
     this._onDidChangeTreeData.fire();
   }
 
@@ -204,7 +207,13 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     try {
       const content = await this._readRemoteContent(element);
       const uri = this._getRemoteUri(element);
-      this._fileContents.set(uri.path, toBytes(content));
+      const key = this._getRemoteFileKey(uri);
+      this._fileContents.set(key, toBytes(content));
+      if (this._isRemoteFileEditable(element)) {
+        this._writableRemoteFiles.set(key, element);
+      } else {
+        this._writableRemoteFiles.delete(key);
+      }
 
       await vscode.commands.executeCommand('vscode.open', uri, { preview: false });
     } catch (error) {
@@ -214,7 +223,35 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
 
   handleRemoteFileClosed(document: vscode.TextDocument): void {
     if (document.uri.scheme === 'ecode') {
-      this._fileContents.delete(document.uri.path);
+      const key = this._getRemoteFileKey(document.uri);
+      this._fileContents.delete(key);
+      this._writableRemoteFiles.delete(key);
+    }
+  }
+
+  getRemoteFileContent(uri: vscode.Uri): Uint8Array | undefined {
+    return this._fileContents.get(this._getRemoteFileKey(uri));
+  }
+
+  isRemoteFileWritable(uri: vscode.Uri): boolean {
+    return this._writableRemoteFiles.has(this._getRemoteFileKey(uri));
+  }
+
+  async updateRemoteFile(uri: vscode.Uri, content: Uint8Array): Promise<void> {
+    const key = this._getRemoteFileKey(uri);
+    const element = this._writableRemoteFiles.get(key);
+    if (!element) throw new Error('Remote file metadata is unavailable. Reopen the file and try again.');
+
+    const text = Buffer.from(content).toString('utf8');
+    const extension = this._getNodeFileExtension(element)?.toLowerCase();
+    try {
+      const response = await this._getClient().updateFile(this._requireNodeId(element), text, extension === 'js');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`);
+      }
+      this._fileContents.set(key, Uint8Array.from(content));
+    } catch (error) {
+      throw new Error(`Save remote file "${element.label}" failed: ${getErrorMessage(error)}`);
     }
   }
 
@@ -237,7 +274,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
       });
       const localUri = vscode.Uri.file(targetPath);
 
-      this._fileContents.set(remoteUri.path, toBytes(remoteContent));
+      this._fileContents.set(this._getRemoteFileKey(remoteUri), toBytes(remoteContent));
       await vscode.commands.executeCommand('vscode.diff', remoteUri, localUri, `${element.label}: Remote ↔ Local`);
     } catch (error) {
       vscode.window.showErrorMessage(`Compare failed: ${getErrorMessage(error)}`);
@@ -581,6 +618,20 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
 
   _getRemoteUri(element: EcodeNode): vscode.Uri {
     return vscode.Uri.parse(`ecode:/${element.remotePath}`);
+  }
+
+  _getRemoteFileKey(uri: vscode.Uri): string {
+    return uri.toString();
+  }
+
+  _isRemoteFileEditable(element: EcodeNode): boolean {
+    if (element.type !== 'file' || !element.id) return false;
+    return (
+      element.treeType !== 'resource' &&
+      element.treeType !== 'jar' &&
+      element.attribute !== 'resource' &&
+      element.attribute !== 'jar'
+    );
   }
 
   async _updateAppStatus(app: EcodeNode, updates: Pick<EcodeNode, 'appStatus' | 'appPreStateOrder'>): Promise<void> {

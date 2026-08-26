@@ -63,5 +63,7 @@ passes app metadata collected from `ecode-tree.json` directly to the SDK.
 
 The built-in VS Code Explorer has no eCode context menu.
 
-Opening a file in the Remote view displays read-only remote content and never
-downloads or creates a local file.
+Opening a code file in the Remote view displays editable remote content without
+downloading or creating a local file. Saving the editor writes the updated
+content directly to the active eCode environment. Remote resources, JAR files,
+and the remote side of a comparison remain read-only.
