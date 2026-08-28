@@ -9,11 +9,11 @@ The eCode Activity Bar container contains two views:
 - **Local** is the upper view and is backed by local files.
 - **Remote** is the lower view and is backed by the remote eCode API.
 
-Use the gear button in either view, or run **eCode: Manage Environments** from
-the Command Palette, to open the visual environment editor. It supports adding,
-removing, reordering, and selecting the active environment, as well as browsing
-for the local directory. Saving the form updates the existing
-`ecode.environments` and `ecode.activeEnvironment` VS Code settings.
+Use the gear button in either view, or run **eCode: Manage Settings** from the
+Command Palette, to open the visual settings editor. It manages the standalone
+local development server configuration as well as adding, removing, reordering,
+and selecting environments. Saving the form updates `ecode.devServer`,
+`ecode.environments`, and `ecode.activeEnvironment`.
 
 Running **Download** from the Local view downloads source files to
 `<localDir>/src` and replaces `<localDir>/.ecode/ecode-tree.json` with the
@@ -67,3 +67,23 @@ Opening a code file in the Remote view displays editable remote content without
 downloading or creating a local file. Saving the editor writes the updated
 content directly to the active eCode environment. Remote resources, JAR files,
 and the remote side of a comparison remain read-only.
+
+## Local Debugging
+
+Use **eCode: Start Local Debugging** or the play button in the Local view to:
+
+1. Build released local apps into `<localDir>/dist`.
+2. Watch `src` and `.ecode` for incremental rebuilds.
+3. Start a loopback reverse proxy to the active environment's `baseUrl`.
+4. Open the local proxy URL when `autoOpen` is enabled in `ecode.devServer`.
+
+The extension bundles `ecode-dev-runtime`, `ecode-sdk.js`, and `wea.js`; an
+eCode project does not need Gulp, BrowserSync, Babel, or its own copy of the
+runtime assets. Use the stop button, the status bar item, or the corresponding
+commands to manage the session. Changing the active environment or any
+`ecode.devServer` setting stops the current session so it cannot continue
+proxying to stale configuration.
+
+The standalone `ecode.devServer` object contains `host`, `port`, `autoOpen`,
+`openPath`, `strictSSL`, and `changeOrigin`. It is editable in **Manage
+Settings** and is independent from the active OA environment.

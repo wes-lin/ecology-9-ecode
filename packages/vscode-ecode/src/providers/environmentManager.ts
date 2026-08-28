@@ -1,11 +1,13 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { DEFAULT_ECODE_DEV_SERVER, getEcodeDevServer, type EcodeDevServerConfig } from '../config/ecodeDevServer';
 import { EcodeEnvironmentConfig, getEcodeEnvironments } from '../config/ecodeEnvironment';
 import { getErrorMessage } from '../utils/errors';
 
 type EnvironmentManagerMessage = {
   command?: unknown;
   environments?: unknown;
+  devServer?: unknown;
   activeIndex?: unknown;
   index?: unknown;
   name?: unknown;
@@ -25,7 +27,7 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
 
     const panel = vscode.window.createWebviewPanel(
       'ecode.environmentManager',
-      'eCode Environments',
+      'eCode Settings',
       vscode.ViewColumn.One,
       {
         enableScripts: true,
@@ -61,7 +63,7 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
         await this.postState();
         break;
       case 'save':
-        await this.save(message.environments, message.activeIndex);
+        await this.save(message.environments, message.devServer, message.activeIndex);
         break;
       case 'browseLocalDir':
         await this.browseLocalDirectory(message.index);
@@ -79,37 +81,42 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
     if (!this.panel) return;
     const config = vscode.workspace.getConfiguration('ecode');
     const environments = getEcodeEnvironments(config);
+    const devServer = getEcodeDevServer(config);
     const configuredActiveName = config.get<string>('activeEnvironment', '');
     const activeIndex = Math.max(
       0,
       environments.findIndex((environment) => environment.name === configuredActiveName)
     );
-    await this.panel.webview.postMessage({ type: 'state', environments, activeIndex });
+    await this.panel.webview.postMessage({ type: 'state', environments, devServer, activeIndex });
   }
 
-  private async save(rawEnvironments: unknown, rawActiveIndex: unknown): Promise<void> {
+  private async save(rawEnvironments: unknown, rawDevServer: unknown, rawActiveIndex: unknown): Promise<void> {
     try {
       const environments = this.validateEnvironments(rawEnvironments);
+      const devServer = this.validateDevServer(rawDevServer);
       const activeIndex = typeof rawActiveIndex === 'number' ? rawActiveIndex : 0;
       const activeEnvironment = environments[activeIndex] ?? environments[0];
       const config = vscode.workspace.getConfiguration('ecode');
+      const environmentTarget = this.getConfigurationTarget(config, 'environments');
 
-      await config.update('environments', environments, this.getConfigurationTarget(config, 'environments'));
+      await config.update('environments', environments, environmentTarget);
       await config.update(
         'activeEnvironment',
         activeEnvironment?.name ?? '',
         this.getConfigurationTarget(config, 'activeEnvironment')
       );
+      await config.update('devServer', devServer, environmentTarget);
       await this.panel?.webview.postMessage({
         type: 'saved',
         environments,
+        devServer,
         activeIndex: activeEnvironment ? environments.indexOf(activeEnvironment) : 0,
       });
-      vscode.window.showInformationMessage('eCode environments saved.');
+      vscode.window.showInformationMessage('eCode settings saved.');
     } catch (error) {
       const message = getErrorMessage(error);
       await this.panel?.webview.postMessage({ type: 'error', message });
-      vscode.window.showErrorMessage(`Could not save eCode environments: ${message}`);
+      vscode.window.showErrorMessage(`Could not save eCode settings: ${message}`);
     }
   }
 
@@ -156,6 +163,34 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
     return typeof value === 'string' ? value.trim() : '';
   }
 
+  private validateDevServer(value: unknown): EcodeDevServerConfig {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('Development server settings are invalid.');
+    }
+    const record = value as Record<string, unknown>;
+    return {
+      host: this.stringValue(record.host) || DEFAULT_ECODE_DEV_SERVER.host,
+      port: this.portValue(record.port),
+      autoOpen: this.booleanValue(record.autoOpen, DEFAULT_ECODE_DEV_SERVER.autoOpen),
+      openPath: this.stringValue(record.openPath) || DEFAULT_ECODE_DEV_SERVER.openPath,
+      strictSSL: this.booleanValue(record.strictSSL, DEFAULT_ECODE_DEV_SERVER.strictSSL),
+      changeOrigin: this.booleanValue(record.changeOrigin, DEFAULT_ECODE_DEV_SERVER.changeOrigin),
+    };
+  }
+
+  private portValue(value: unknown): number {
+    if (value === undefined || value === null || value === '') return 9090;
+    const port = typeof value === 'number' ? value : Number(this.stringValue(value));
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error('Local debug port must be an integer between 1 and 65535.');
+    }
+    return port;
+  }
+
+  private booleanValue(value: unknown, fallback: boolean): boolean {
+    return typeof value === 'boolean' ? value : fallback;
+  }
+
   private getConfigurationTarget(
     config: vscode.WorkspaceConfiguration,
     key: 'environments' | 'activeEnvironment'
@@ -195,11 +230,7 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
     if (index < 0 || !this.panel) return;
 
     const name = this.stringValue(rawName) || 'this environment';
-    const confirmation = await vscode.window.showWarningMessage(
-      `Delete "${name}"?`,
-      { modal: true },
-      'Delete'
-    );
+    const confirmation = await vscode.window.showWarningMessage(`Delete "${name}"?`, { modal: true }, 'Delete');
     if (confirmation === 'Delete') await this.panel.webview.postMessage({ type: 'deleteConfirmed', index });
   }
 
@@ -222,7 +253,7 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
-  <title>eCode Environments</title>
+  <title>eCode Settings</title>
   <style nonce="${nonce}">
     * { box-sizing: border-box; }
     body {
@@ -266,6 +297,7 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
     button.icon-button.danger:hover { color: var(--vscode-errorForeground); }
     button:disabled { opacity: .45; cursor: default; }
     .environment-list { display: grid; gap: 14px; }
+    h2 { margin: 28px 0 12px; font-size: 17px; font-weight: 600; }
     .card {
       border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
       border-radius: 6px;
@@ -297,7 +329,7 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
     .field.wide { grid-column: 1 / -1; }
     label.field-label { display: block; margin-bottom: 5px; font-size: 12px; font-weight: 600; }
     .hint { margin-top: 4px; color: var(--vscode-descriptionForeground); font-size: 11px; }
-    input[type="text"], input[type="url"], input[type="password"] {
+    input[type="text"], input[type="url"], input[type="password"], input[type="number"] {
       width: 100%;
       height: 30px;
       padding: 4px 8px;
@@ -308,6 +340,8 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
       font: inherit;
     }
     input::placeholder { color: var(--vscode-input-placeholderForeground); }
+    .checkbox-field { display: flex; align-items: center; gap: 8px; min-height: 30px; cursor: pointer; }
+    .checkbox-field input { accent-color: var(--vscode-focusBorder); }
     .input-action { display: flex; }
     .input-action input { min-width: 0; border-radius: 2px 0 0 2px; }
     .input-action button { flex: 0 0 auto; min-height: 30px; border-radius: 0 2px 2px 0; }
@@ -346,26 +380,40 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
   <main class="page">
     <header class="page-header">
       <div>
-        <h1>Environments</h1>
-        <p class="subtitle">Manage eCode servers and choose the environment used by Local and Remote views.</p>
+        <h1>eCode Settings</h1>
+        <p class="subtitle">Configure local debugging and the environments used by Local and Remote views.</p>
       </div>
       <button id="add" type="button">+ Add environment</button>
     </header>
     <form id="form">
+      <section class="card">
+        <div class="card-header"><span class="card-title">Local Development Server</span></div>
+        <div id="dev-server-fields" class="fields"></div>
+      </section>
+      <h2>Environments</h2>
       <div id="environment-list" class="environment-list"></div>
       <div class="footer">
         <div id="status" class="status" role="status" aria-live="polite"></div>
         <button id="reload" class="secondary" type="button">Discard changes</button>
-        <button id="save" type="submit">Save environments</button>
+        <button id="save" type="submit">Save settings</button>
       </div>
     </form>
   </main>
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    const devServerFields = document.getElementById('dev-server-fields');
     const list = document.getElementById('environment-list');
     const form = document.getElementById('form');
     const status = document.getElementById('status');
     let environments = [];
+    let devServer = {
+      host: '127.0.0.1',
+      port: 9090,
+      autoOpen: true,
+      openPath: '/',
+      strictSSL: true,
+      changeOrigin: true,
+    };
     let activeIndex = 0;
     let dirty = false;
 
@@ -399,6 +447,9 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
       input.value = card.environment[property] || '';
       input.required = options.required !== false;
       input.autocomplete = options.autocomplete || 'off';
+      if (options.min !== undefined) input.min = String(options.min);
+      if (options.max !== undefined) input.max = String(options.max);
+      if (options.step !== undefined) input.step = String(options.step);
       input.addEventListener('input', () => {
         card.environment[property] = input.value;
         if (property === 'name') card.title.textContent = input.value || 'Unnamed environment';
@@ -420,6 +471,45 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
         wrapper.append(hint);
       }
       card.fields.append(wrapper);
+    }
+
+    function createCheckboxField(card, labelText, property, hint) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'field';
+      const label = document.createElement('label');
+      label.className = 'checkbox-field';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = Boolean(card.environment[property]);
+      const caption = document.createElement('span');
+      caption.textContent = labelText;
+      input.addEventListener('change', () => {
+        card.environment[property] = input.checked;
+        markDirty();
+      });
+      label.append(input, caption);
+      wrapper.append(label);
+      if (hint) {
+        const hintElement = document.createElement('div');
+        hintElement.className = 'hint';
+        hintElement.textContent = hint;
+        wrapper.append(hintElement);
+      }
+      card.fields.append(wrapper);
+    }
+
+    function renderDevServer() {
+      devServerFields.replaceChildren();
+      const card = { environment: devServer, fields: devServerFields };
+      createField(card, 'Host', 'host', { placeholder: '127.0.0.1' });
+      createField(card, 'Port', 'port', { type: 'number', min: 1, max: 65535, step: 1, placeholder: '9090' });
+      createField(card, 'Open path', 'openPath', {
+        placeholder: '/',
+        hint: 'Path opened through the local proxy after startup.',
+      });
+      createCheckboxField(card, 'Open automatically after startup', 'autoOpen');
+      createCheckboxField(card, 'Verify upstream TLS certificates', 'strictSSL');
+      createCheckboxField(card, 'Rewrite the upstream Host header', 'changeOrigin');
     }
 
     function actionButton(label, title, handler, className = '') {
@@ -552,7 +642,13 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
     }
 
     document.getElementById('add').addEventListener('click', () => {
-      environments.push({ name: uniqueName(), baseUrl: '', username: '', password: '', localDir: './' });
+      environments.push({
+        name: uniqueName(),
+        baseUrl: '',
+        username: '',
+        password: '',
+        localDir: './',
+      });
       if (environments.length === 1) activeIndex = 0;
       markDirty();
       render();
@@ -574,16 +670,18 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
         return;
       }
       setStatus('Saving…');
-      vscode.postMessage({ command: 'save', environments, activeIndex });
+      vscode.postMessage({ command: 'save', environments, devServer, activeIndex });
     });
 
     window.addEventListener('message', (event) => {
       const message = event.data;
       if (message.type === 'state' || message.type === 'saved') {
         environments = message.environments;
+        devServer = message.devServer;
         activeIndex = message.activeIndex;
         dirty = false;
         setStatus(message.type === 'saved' ? 'Saved' : '');
+        renderDevServer();
         render();
       } else if (message.type === 'localDir' && environments[message.index]) {
         environments[message.index].localDir = message.localDir;

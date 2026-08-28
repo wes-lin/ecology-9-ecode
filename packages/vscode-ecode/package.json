@@ -3,7 +3,7 @@
   "displayName": "eCode Explorer",
   "description": "Browse and download Ecology 9 ecode files from VS Code",
   "icon": "assets/ecode.png",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "publisher": "ecode-dev-assistant",
   "repository": {
     "url": "https://github.com/wes-lin/ecology-9-ecode/tree/main/packages/vscode-ecode"
@@ -25,7 +25,7 @@
         "ecode.environments": {
           "type": "array",
           "default": [],
-          "description": "Named eCode environments. Use the eCode: Manage Environments command for a visual editor.",
+          "description": "Named eCode environments. Use the eCode: Manage Settings command for a visual editor.",
           "items": {
             "type": "object",
             "required": [
@@ -64,6 +64,53 @@
           "type": "string",
           "default": "",
           "description": "Active eCode environment name"
+        },
+        "ecode.devServer": {
+          "type": "object",
+          "default": {
+            "host": "127.0.0.1",
+            "port": 9090,
+            "autoOpen": true,
+            "openPath": "/",
+            "strictSSL": true,
+            "changeOrigin": true
+          },
+          "description": "Local eCode development server settings.",
+          "additionalProperties": false,
+          "properties": {
+            "host": {
+              "type": "string",
+              "default": "127.0.0.1",
+              "description": "Host interface used by the local development proxy."
+            },
+            "port": {
+              "type": "integer",
+              "default": 9090,
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Port used by the local development proxy."
+            },
+            "autoOpen": {
+              "type": "boolean",
+              "default": true,
+              "description": "Open the local proxied Ecology site after starting local debugging."
+            },
+            "openPath": {
+              "type": "string",
+              "default": "/",
+              "description": "Path opened after the local development proxy starts."
+            },
+            "strictSSL": {
+              "type": "boolean",
+              "default": true,
+              "description": "Verify TLS certificates when proxying to an HTTPS Ecology environment."
+            },
+            "changeOrigin": {
+              "type": "boolean",
+              "default": true,
+              "description": "Replace the Host header with the upstream Ecology host when proxying requests."
+            }
+          }
         }
       }
     },
@@ -153,7 +200,7 @@
       },
       {
         "command": "ecode.openSettings",
-        "title": "Manage Environments",
+        "title": "Manage Settings",
         "category": "eCode",
         "icon": "$(gear)",
         "enablement": "!ecodeExplorer.busy && !ecodeLocalExplorer.publishSelection"
@@ -325,6 +372,41 @@
         "title": "Set Local App Preload Order",
         "category": "eCode",
         "enablement": "!ecodeLocalExplorer.publishSelection"
+      },
+      {
+        "command": "ecode.dev.start",
+        "title": "Start Local Debugging",
+        "category": "eCode",
+        "icon": "$(debug-start)",
+        "enablement": "!ecode.dev.running && !ecode.dev.busy && !ecodeExplorer.busy && !ecodeLocalExplorer.publishSelection"
+      },
+      {
+        "command": "ecode.dev.stop",
+        "title": "Stop Local Debugging",
+        "category": "eCode",
+        "icon": "$(debug-stop)",
+        "enablement": "ecode.dev.running && !ecode.dev.busy"
+      },
+      {
+        "command": "ecode.dev.restart",
+        "title": "Restart Local Debugging",
+        "category": "eCode",
+        "icon": "$(debug-restart)",
+        "enablement": "ecode.dev.running && !ecode.dev.busy"
+      },
+      {
+        "command": "ecode.dev.build",
+        "title": "Build Local Apps",
+        "category": "eCode",
+        "icon": "$(tools)",
+        "enablement": "!ecode.dev.busy && !ecodeLocalExplorer.publishSelection"
+      },
+      {
+        "command": "ecode.dev.open",
+        "title": "Open Local Ecology",
+        "category": "eCode",
+        "icon": "$(link-external)",
+        "enablement": "ecode.dev.running && !ecode.dev.busy"
       }
     ],
     "menus": {
@@ -363,6 +445,21 @@
           "command": "ecode.openSettings",
           "when": "view == ecodeLocalExplorer && !ecodeLocalExplorer.publishSelection",
           "group": "navigation@5"
+        },
+        {
+          "command": "ecode.dev.start",
+          "when": "view == ecodeLocalExplorer && !ecode.dev.running && !ecode.dev.busy && !ecodeExplorer.busy && !ecodeLocalExplorer.publishSelection",
+          "group": "navigation@6"
+        },
+        {
+          "command": "ecode.dev.stop",
+          "when": "view == ecodeLocalExplorer && ecode.dev.running && !ecode.dev.busy",
+          "group": "navigation@6"
+        },
+        {
+          "command": "ecode.dev.open",
+          "when": "view == ecodeLocalExplorer && ecode.dev.running && !ecode.dev.busy",
+          "group": "navigation@7"
         },
         {
           "command": "ecode.refresh",
@@ -562,6 +659,9 @@
     "package": "pnpm run build:production && node scripts/ensure-releases-dir.js && vsce package --no-dependencies --out releases",
     "lint": "echo 'Run lint from root'",
     "test": "echo 'No tests yet'"
+  },
+  "dependencies": {
+    "ecode-dev-runtime": "workspace:*"
   },
   "license": "ISC",
   "devDependencies": {

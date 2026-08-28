@@ -4,3 +4,4 @@
 !LICENSE
 !assets/**
 !dist/extension.js
+!dist/runtime-assets/**

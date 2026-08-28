@@ -1,11 +1,14 @@
 import * as vscode from 'vscode';
 import { getActiveEcodeEnvironment, getEcodeEnvironments } from './config/ecodeEnvironment';
+import { EcodeDevSessionManager, showEcodeDevError } from './dev/ecodeDevSessionManager';
 import { EcodeNode } from './providers/ecodeNode';
 import { EcodeEnvironmentManager } from './providers/environmentManager';
 import { LocalTreeDataProvider } from './providers/localTreeDataProvider';
 import { EcodeTreeDataProvider } from './providers/treeDataProvider';
 import { ActiveEcodeClientProvider } from './utils/ecodeClientFactory';
 import { getErrorMessage } from './utils/errors';
+
+let activeDevSessionManager: EcodeDevSessionManager | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   const clientProvider = new ActiveEcodeClientProvider(context.globalStorageUri.fsPath);
@@ -21,6 +24,8 @@ export function activate(context: vscode.ExtensionContext): void {
     manageCheckboxStateManually: true,
   });
   const environmentManager = new EcodeEnvironmentManager(context.extensionUri);
+  const devSessionManager = new EcodeDevSessionManager(context.extensionUri);
+  activeDevSessionManager = devSessionManager;
   const refreshLocalTree = (uri?: vscode.Uri): void => {
     localTreeDataProvider.reloadFromTree(uri?.fsPath).catch((error) => {
       vscode.window.showErrorMessage(`Refresh local eCode metadata failed: ${getErrorMessage(error)}`);
@@ -34,7 +39,8 @@ export function activate(context: vscode.ExtensionContext): void {
     localTreeView,
     treeDataProvider,
     localTreeDataProvider,
-    environmentManager
+    environmentManager,
+    devSessionManager
   );
   context.subscriptions.push(
     localTreeView.onDidChangeCheckboxState((event) => {
@@ -44,6 +50,23 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(vscode.commands.registerCommand('ecode.refresh', () => treeDataProvider.refresh()));
   context.subscriptions.push(
     vscode.commands.registerCommand('ecode.local.refresh', () => localTreeDataProvider.reloadFromTree())
+  );
+
+  const registerDevCommand = (command: string, action: string, operation: () => Promise<void>): vscode.Disposable =>
+    vscode.commands.registerCommand(command, async () => {
+      try {
+        await operation();
+      } catch (error) {
+        showEcodeDevError(action, error);
+      }
+    });
+
+  context.subscriptions.push(
+    registerDevCommand('ecode.dev.start', 'Start local eCode debugging', () => devSessionManager.start()),
+    registerDevCommand('ecode.dev.stop', 'Stop local eCode debugging', () => devSessionManager.stop()),
+    registerDevCommand('ecode.dev.restart', 'Restart local eCode debugging', () => devSessionManager.restart()),
+    registerDevCommand('ecode.dev.build', 'Build local eCode apps', () => devSessionManager.build()),
+    registerDevCommand('ecode.dev.open', 'Open local Ecology', () => devSessionManager.open())
   );
 
   context.subscriptions.push(
@@ -286,6 +309,9 @@ export function activate(context: vscode.ExtensionContext): void {
         treeDataProvider.refresh();
         refreshLocalTree();
       }
+      void devSessionManager.handleConfigurationChange(event).catch((error) => {
+        showEcodeDevError('Apply local eCode debugging configuration', error);
+      });
     })
   );
 
@@ -297,4 +323,10 @@ export function activate(context: vscode.ExtensionContext): void {
     localMetadataWatcher.onDidDelete(refreshLocalTree)
   );
   refreshLocalTree();
+}
+
+export async function deactivate(): Promise<void> {
+  const manager = activeDevSessionManager;
+  activeDevSessionManager = undefined;
+  await manager?.shutdown();
 }
