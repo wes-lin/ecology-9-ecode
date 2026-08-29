@@ -156,7 +156,7 @@ export class EcodeDevSessionManager implements vscode.Disposable {
     const options = this.getRuntimeOptions();
     const runtime = createEcodeDevRuntime(options);
     try {
-      await runtime.build();
+      await runtime.prepare();
       const address = await runtime.startProxy();
       this.runtime = runtime;
       this.address = address;

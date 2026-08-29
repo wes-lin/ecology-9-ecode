@@ -40,7 +40,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'watch') {
-    await runtime.build();
+    await runtime.prepare();
     runtime.startWatching();
   } else if (command === 'proxy') {
     await runtime.startProxy();

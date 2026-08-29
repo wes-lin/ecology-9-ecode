@@ -6,6 +6,7 @@ import { isPathInside, normalizePathKey, normalizeRelativePath, resolveInside, t
 import { NOOP_DEV_LOGGER, type EcodeDevBuildOptions, type EcodeDevBuildResult, type EcodeDevLogger } from '../types';
 import { buildAppCss } from './app-css';
 import { buildAppJavaScript } from './app-javascript';
+import { EcodeBuildStateStore, type EcodeBuildState } from './build-state';
 import { EcodePreStateBuilder } from './prestate';
 import { copyAppResources, rebuildResource } from './resource';
 
@@ -70,6 +71,9 @@ export class EcodeProjectBuilder {
   readonly preStateBaseJavaScriptFiles: string[];
   private readonly logger: EcodeDevLogger;
   private readonly preStateBuilder: EcodePreStateBuilder;
+  private readonly buildStateStore: EcodeBuildStateStore;
+  private cachedBuildState?: EcodeBuildState;
+  private buildStateDirty = false;
   private cachedReleasedApps?: EcodeAppConfig[];
   private cachedAppRoots?: Array<{ app: EcodeAppConfig; root: string }>;
   private cachedTree?: EcodeTreeNode[];
@@ -88,6 +92,14 @@ export class EcodeProjectBuilder {
     this.logger = options.logger || NOOP_DEV_LOGGER;
     this.preStateBuilder = new EcodePreStateBuilder({
       sourceDirectory: this.sourceDirectory,
+      outputDirectory: this.outputDirectory,
+      baseJavaScriptFiles: this.preStateBaseJavaScriptFiles,
+    });
+    this.buildStateStore = new EcodeBuildStateStore({
+      projectRoot: this.projectRoot,
+      sourceDirectory: this.sourceDirectory,
+      appsDirectory: this.appsDirectory,
+      treeFile: this.treeFile,
       outputDirectory: this.outputDirectory,
       baseJavaScriptFiles: this.preStateBaseJavaScriptFiles,
     });
@@ -112,6 +124,7 @@ export class EcodeProjectBuilder {
     }
     this.logger.info('Building global eCode pre-state output.');
     await this.preStateBuilder.build(apps);
+    await this.recreateBuildState();
 
     const result = {
       builtAppIds: apps.map((app) => app.appId),
@@ -119,6 +132,50 @@ export class EcodeProjectBuilder {
       durationMs: elapsedSince(startedAt),
     };
     this.logger.info(`eCode build completed in ${result.durationMs}ms.`);
+    return result;
+  }
+
+  async prepare(): Promise<EcodeDevBuildResult> {
+    const startedAt = performance.now();
+    this.invalidateConfigurationCache();
+    const state = await this.buildStateStore.load();
+    if (!state) {
+      this.logger.info('No reusable eCode build state found; performing a full build.');
+      return this.build();
+    }
+
+    const metadata = await this.buildStateStore.captureMetadata();
+    if (!this.buildStateStore.metadataMatches(state, metadata)) {
+      this.logger.info('eCode build metadata changed; performing a full build.');
+      return this.build();
+    }
+    if (!(await this.buildStateStore.outputsMatch(state))) {
+      this.logger.info('eCode build output is incomplete or changed; performing a full build.');
+      return this.build();
+    }
+
+    const apps = this.loadReleasedApps();
+    if (!this.preStateBuilder.restoreCache(apps, state.preState)) {
+      this.logger.info('eCode pre-state cache is incompatible; performing a full build.');
+      return this.build();
+    }
+
+    const sources = await this.buildStateStore.captureSources();
+    const changedFiles = this.buildStateStore.diffSources(state, sources);
+    this.cachedBuildState = state;
+    state.metadata = metadata;
+    if (changedFiles.length === 0) {
+      state.sources = sources;
+      const result = { builtAppIds: [], outputDirectory: this.outputDirectory, durationMs: elapsedSince(startedAt) };
+      this.logger.info(`Reused current eCode build output in ${result.durationMs}ms.`);
+      return result;
+    }
+
+    this.logger.info(`Found ${changedFiles.length} source change(s) since the previous eCode build.`);
+    const result = await this.rebuildFiles(changedFiles);
+    await this.recreateBuildState();
+    result.durationMs = elapsedSince(startedAt);
+    this.logger.info(`eCode startup build preparation completed in ${result.durationMs}ms.`);
     return result;
   }
 
@@ -218,6 +275,7 @@ export class EcodeProjectBuilder {
       tasks.push(this.preStateBuilder.buildCss(apps, [...preStateCssFiles.values()]));
     }
     await Promise.all(tasks);
+    await this.updateBuildStateSources(absolutePaths);
 
     const result = {
       builtAppIds: [...builtAppIds],
@@ -234,6 +292,11 @@ export class EcodeProjectBuilder {
 
   async reloadConfiguration(): Promise<EcodeDevBuildResult> {
     return this.build();
+  }
+
+  async flushBuildState(): Promise<void> {
+    if (!this.cachedBuildState || !this.buildStateDirty) return;
+    await this.recreateBuildState();
   }
 
   private loadReleasedApps(): EcodeAppConfig[] {
@@ -262,6 +325,30 @@ export class EcodeProjectBuilder {
     this.cachedTreeNodes = undefined;
     this.cachedTreeOrders.clear();
     this.preStateBuilder.reset();
+    this.cachedBuildState = undefined;
+    this.buildStateDirty = false;
+  }
+
+  private async recreateBuildState(): Promise<void> {
+    const preState = this.preStateBuilder.createCache();
+    if (!preState) return;
+    try {
+      this.cachedBuildState = await this.buildStateStore.create(preState);
+      await this.buildStateStore.save(this.cachedBuildState);
+      this.buildStateDirty = false;
+    } catch (error) {
+      this.cachedBuildState = undefined;
+      this.buildStateDirty = false;
+      this.logger.warn('Unable to save reusable eCode build state.', error);
+    }
+  }
+
+  private async updateBuildStateSources(filePaths: string[]): Promise<void> {
+    if (!this.cachedBuildState) return;
+    await this.buildStateStore.updateSources(this.cachedBuildState, filePaths);
+    const preState = this.preStateBuilder.createCache();
+    if (preState) this.cachedBuildState.preState = preState;
+    this.buildStateDirty = true;
   }
 
   private async readTree(): Promise<EcodeTreeNode[]> {

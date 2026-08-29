@@ -72,7 +72,7 @@ and the remote side of a comparison remain read-only.
 
 Use **eCode: Start Local Debugging** or the play button in the Local view to:
 
-1. Build released local apps into `<localDir>/dist`.
+1. Prepare released local apps in `<localDir>/dist`, reusing valid output from the previous session.
 2. Watch `src` and `.ecode` for incremental rebuilds.
 3. Start a loopback reverse proxy to the active environment's `baseUrl`.
 4. Open the local proxy URL when `autoOpen` is enabled in `ecode.devServer`.
@@ -84,6 +84,13 @@ metadata, tree ordering, and compiled pre-state fragments stay cached until a
 before reassembling `init.js` or `init.css`. Changes collected in the same
 watch window are grouped by output target and independent targets run in
 parallel.
+
+Local Debugging persists file and output signatures plus compiled pre-state
+fragments in `dist/.ecode-dev-runtime/build-state.json`. When the next session
+starts with no changes, it skips compilation. Source changes made while
+debugging was stopped are rebuilt incrementally; changed metadata, missing
+output, or an incompatible cache automatically triggers a clean build. The
+manual build command always performs a clean build.
 
 The extension bundles `ecode-dev-runtime`, `ecode-sdk.js`, and `wea.js`; an
 eCode project does not need Gulp, BrowserSync, Babel, or its own copy of the

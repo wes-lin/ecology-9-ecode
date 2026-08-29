@@ -30,6 +30,10 @@ export class EcodeDevRuntime {
     return this.enqueue(() => this.builder.build());
   }
 
+  prepare(): Promise<EcodeDevBuildResult> {
+    return this.enqueue(() => this.builder.prepare());
+  }
+
   rebuildFile(filePath: string): Promise<EcodeDevBuildResult> {
     return this.enqueue(() => this.builder.rebuildFile(filePath));
   }
@@ -91,7 +95,7 @@ export class EcodeDevRuntime {
   }
 
   async start(): Promise<EcodeDevServerAddress> {
-    await this.build();
+    await this.prepare();
     this.startWatching();
     try {
       return await this.startProxy();
@@ -105,6 +109,7 @@ export class EcodeDevRuntime {
     this.stopWatching();
     await this.stopProxy();
     await this.buildQueue.catch(() => undefined);
+    await this.builder.flushBuildState();
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {

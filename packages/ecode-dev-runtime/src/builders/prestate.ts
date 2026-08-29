@@ -16,6 +16,12 @@ type PreStateBuilderOptions = {
   baseJavaScriptFiles: string[];
 };
 
+export type EcodePreStateCache = {
+  version: 1;
+  javaScriptParts: Record<string, string | null>;
+  cssParts: Record<string, string | null>;
+};
+
 export class EcodePreStateBuilder {
   private readonly sourceDirectory: string;
   private readonly outputDirectory: string;
@@ -42,6 +48,26 @@ export class EcodePreStateBuilder {
     this.cssParts.clear();
     this.javaScriptCacheInitialized = false;
     this.cssCacheInitialized = false;
+  }
+
+  createCache(): EcodePreStateCache | undefined {
+    if (!this.javaScriptCacheInitialized || !this.cssCacheInitialized) return undefined;
+    return {
+      version: 1,
+      javaScriptParts: this.createCachedParts(this.cachedJavaScriptFiles || [], this.javaScriptParts),
+      cssParts: this.createCachedParts(this.cachedCssFiles || [], this.cssParts),
+    };
+  }
+
+  restoreCache(apps: EcodeAppConfig[], cache: EcodePreStateCache): boolean {
+    if (cache.version !== 1) return false;
+    const javaScriptFiles = this.getJavaScriptFiles(apps);
+    const cssFiles = this.getCssFiles(apps);
+    if (!this.restoreCachedParts(javaScriptFiles, cache.javaScriptParts, this.javaScriptParts)) return false;
+    if (!this.restoreCachedParts(cssFiles, cache.cssParts, this.cssParts)) return false;
+    this.javaScriptCacheInitialized = true;
+    this.cssCacheInitialized = true;
+    return true;
   }
 
   async build(apps: EcodeAppConfig[]): Promise<void> {
@@ -131,6 +157,33 @@ export class EcodePreStateBuilder {
     return files
       .map((file) => cache.get(normalizePathKey(file.sourcePath)))
       .filter((part): part is string => part !== undefined);
+  }
+
+  private createCachedParts(files: PreStateFile[], parts: Map<string, string>): Record<string, string | null> {
+    return Object.fromEntries(
+      files.map((file) => {
+        const key = normalizePathKey(file.sourcePath);
+        return [key, parts.get(key) ?? null];
+      })
+    );
+  }
+
+  private restoreCachedParts(
+    files: PreStateFile[],
+    cachedParts: Record<string, string | null>,
+    parts: Map<string, string>
+  ): boolean {
+    if (!cachedParts || typeof cachedParts !== 'object') return false;
+    const entries = files.map((file) => {
+      const key = normalizePathKey(file.sourcePath);
+      return [key, Object.prototype.hasOwnProperty.call(cachedParts, key) ? cachedParts[key] : undefined] as const;
+    });
+    if (entries.some(([, part]) => part === undefined)) return false;
+    parts.clear();
+    for (const [key, part] of entries) {
+      if (part !== null) parts.set(key, part as string);
+    }
+    return true;
   }
 
   private async updateJavaScriptPart(file: PreStateFile): Promise<void> {

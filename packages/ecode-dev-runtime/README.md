@@ -42,15 +42,18 @@ await runtime.dispose();
 The main APIs are:
 
 - `build()` performs a clean build of `dist/dev` and `dist/release`.
+- `prepare()` reuses valid output or incrementally rebuilds source changes since the previous session.
 - `rebuildFile(path)` routes the change to the owning app's JavaScript, CSS, resource, or pre-state task.
 - `rebuildFiles(paths)` groups a change batch by output target and rebuilds independent targets in parallel.
 - `reloadConfiguration()` reloads `.ecode/apps` and performs a clean build.
 - `startWatching()` and `stopWatching()` manage the built-in Node watcher.
 - `startProxy()` and `stopProxy()` manage the local reverse proxy.
-- `start()` builds once, starts watching, and starts the proxy.
-- `dispose()` stops all resources and waits for queued builds.
+- `start()` prepares the build output, starts watching, and starts the proxy.
+- `dispose()` stops all resources, waits for queued builds, and persists the reusable build state.
 
 The VS Code extension can use its own `FileSystemWatcher` and call `rebuildFile` or `reloadConfiguration`; it does not need to use the built-in watcher.
+
+Debug startup stores reusable file signatures, output signatures, and compiled pre-state fragments in `dist/.ecode-dev-runtime/build-state.json`. A later `prepare()` skips compilation when the metadata, sources, runtime assets, and output are unchanged. Source changes made between sessions are sent through the normal incremental rebuild pipeline; incompatible metadata, missing output, or an incompatible cache falls back to a clean build. `dist` remains ignored by Git.
 
 During a watch session, released app metadata, app path lookup, the eCode tree, per-app tree ordering, and compiled pre-state fragments are cached. Changes collected in one debounce window are grouped so that each app output is built once while independent JavaScript, CSS, resource, and pre-state targets run in parallel. A pre-state batch recompiles only its changed fragments before writing `init.js` or `init.css` once. Changing `.ecode/apps` or `ecode-tree.json` clears the session caches and performs a clean build.
 

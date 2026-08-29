@@ -335,6 +335,212 @@ describe('EcodeProjectBuilder', () => {
     }
   });
 
+  it('reuses current build output when a new session has no changes', async () => {
+    const project = createProject();
+    try {
+      const options = { projectRoot: project.root, preStateBaseJavaScriptFiles: [] };
+      await new EcodeProjectBuilder(options).build();
+      const outputJavaScript = path.join(project.root, 'dist', 'release', project.appId, 'index.js');
+      const originalModifiedAt = fs.statSync(outputJavaScript).mtimeMs;
+      const messages = [];
+      const builder = new EcodeProjectBuilder({
+        ...options,
+        logger: {
+          debug: () => {},
+          info: (message) => messages.push(message),
+          warn: () => {},
+          error: () => {},
+        },
+      });
+
+      const result = await builder.prepare();
+
+      assert.deepEqual(result.builtAppIds, []);
+      assert.equal(fs.statSync(outputJavaScript).mtimeMs, originalModifiedAt);
+      assert.ok(messages.some((message) => message.includes('Reused current eCode build output')));
+      assert.equal(fs.existsSync(path.join(project.root, 'dist', '.ecode-dev-runtime', 'build-state.json')), true);
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('incrementally rebuilds source files changed between sessions', async () => {
+    const project = createProject();
+    try {
+      const options = { projectRoot: project.root, preStateBaseJavaScriptFiles: [] };
+      await new EcodeProjectBuilder(options).build();
+      write(project.root, `src/${project.appPath}/style.css`, '.sample { color: midnightblue; padding: 2px; }');
+      const messages = [];
+      const builder = new EcodeProjectBuilder({
+        ...options,
+        logger: {
+          debug: () => {},
+          info: (message) => messages.push(message),
+          warn: () => {},
+          error: () => {},
+        },
+      });
+
+      const result = await builder.prepare();
+
+      assert.deepEqual(result.builtAppIds, [project.appId]);
+      assert.match(
+        fs.readFileSync(path.join(project.root, 'dist', 'release', project.appId, 'index.css'), 'utf8'),
+        /midnightblue/
+      );
+      assert.ok(messages.some((message) => message.includes('Found 1 source change')));
+      assert.equal(
+        messages.some((message) => message.includes('[1/1] Building eCode app')),
+        false
+      );
+      const nextSession = await new EcodeProjectBuilder(options).prepare();
+      assert.deepEqual(nextSession.builtAppIds, []);
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('persists watched source changes when the session stops', async () => {
+    const project = createProject();
+    try {
+      const options = { projectRoot: project.root, preStateBaseJavaScriptFiles: [] };
+      const builder = new EcodeProjectBuilder(options);
+      await builder.build();
+      const cssPath = write(
+        project.root,
+        `src/${project.appPath}/style.css`,
+        '.sample { color: darkgreen; margin: 3px; }'
+      );
+      await builder.rebuildFile(cssPath);
+      await builder.flushBuildState();
+
+      const result = await new EcodeProjectBuilder(options).prepare();
+
+      assert.deepEqual(result.builtAppIds, []);
+      assert.match(
+        fs.readFileSync(path.join(project.root, 'dist', 'release', project.appId, 'index.css'), 'utf8'),
+        /darkgreen/
+      );
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('detects source files added and deleted between sessions', async () => {
+    const project = createProject();
+    try {
+      const options = { projectRoot: project.root, preStateBaseJavaScriptFiles: [] };
+      await new EcodeProjectBuilder(options).build();
+      const addedJavaScript = write(
+        project.root,
+        `src/${project.appPath}/added.js`,
+        'window.addedBetweenSessions = true;'
+      );
+
+      const addedResult = await new EcodeProjectBuilder(options).prepare();
+
+      assert.deepEqual(addedResult.builtAppIds, [project.appId]);
+      const outputJavaScript = path.join(project.root, 'dist', 'release', project.appId, 'index.js');
+      assert.match(fs.readFileSync(outputJavaScript, 'utf8'), /addedBetweenSessions/);
+
+      fs.rmSync(addedJavaScript);
+      fs.rmSync(path.join(project.root, `src/${project.appPath}/assets/logo.txt`));
+      const deletedResult = await new EcodeProjectBuilder(options).prepare();
+
+      assert.deepEqual(deletedResult.builtAppIds, [project.appId]);
+      assert.doesNotMatch(fs.readFileSync(outputJavaScript, 'utf8'), /addedBetweenSessions/);
+      assert.equal(
+        fs.existsSync(path.join(project.root, 'dist', 'release', project.appId, 'assets', 'logo.txt')),
+        false
+      );
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('performs a full build when cached output is missing', async () => {
+    const project = createProject();
+    try {
+      const options = { projectRoot: project.root, preStateBaseJavaScriptFiles: [] };
+      await new EcodeProjectBuilder(options).build();
+      const outputJavaScript = path.join(project.root, 'dist', 'release', project.appId, 'index.js');
+      fs.rmSync(outputJavaScript);
+      const messages = [];
+      const builder = new EcodeProjectBuilder({
+        ...options,
+        logger: {
+          debug: () => {},
+          info: (message) => messages.push(message),
+          warn: () => {},
+          error: () => {},
+        },
+      });
+
+      const result = await builder.prepare();
+
+      assert.deepEqual(result.builtAppIds, [project.appId]);
+      assert.equal(fs.existsSync(outputJavaScript), true);
+      assert.ok(messages.some((message) => message.includes('output is incomplete or changed')));
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('performs a full build when app metadata changes between sessions', async () => {
+    const project = createProject();
+    try {
+      const options = { projectRoot: project.root, preStateBaseJavaScriptFiles: [] };
+      await new EcodeProjectBuilder(options).build();
+      project.config.appPreStateOrder = 1000;
+      write(project.root, '.ecode/apps/app.json', `${JSON.stringify(project.config, null, 2)}\n`);
+      const messages = [];
+      const builder = new EcodeProjectBuilder({
+        ...options,
+        logger: {
+          debug: () => {},
+          info: (message) => messages.push(message),
+          warn: () => {},
+          error: () => {},
+        },
+      });
+
+      const result = await builder.prepare();
+
+      assert.deepEqual(result.builtAppIds, [project.appId]);
+      assert.ok(messages.some((message) => message.includes('build metadata changed')));
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('restores compiled pre-state fragments in a new session', async () => {
+    const project = createProject();
+    try {
+      project.config.preStateFiles.splice(1, 0, 'pre-other.js');
+      write(project.root, '.ecode/apps/app.json', `${JSON.stringify(project.config, null, 2)}\n`);
+      write(project.root, `src/${project.appPath}/pre-other.js`, 'window.otherPreState = "persisted";');
+      const options = { projectRoot: project.root, preStateBaseJavaScriptFiles: [] };
+      await new EcodeProjectBuilder(options).build();
+      const builder = new EcodeProjectBuilder(options);
+      await builder.prepare();
+
+      write(project.root, `src/${project.appPath}/pre-other.js`, 'const broken = ;');
+      const changedPath = write(
+        project.root,
+        `src/${project.appPath}/pre.js`,
+        'window.preStateApp = "restored-cache";'
+      );
+      await builder.rebuildFile(changedPath);
+
+      const initJavaScript = fs.readFileSync(path.join(project.root, 'dist', 'dev', 'init.js'), 'utf8');
+      assert.match(initJavaScript, /restored-cache/);
+      assert.match(initJavaScript, /otherPreState = "persisted"/);
+      assert.doesNotMatch(initJavaScript, /const broken/);
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
   it('removes stale release output after an app becomes unreleased', async () => {
     const project = createProject();
     try {
