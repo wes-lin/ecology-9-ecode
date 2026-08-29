@@ -1,5 +1,5 @@
 export { BUNDLED_ECODE_ASSETS, BUNDLED_ECODE_ASSET_VERSION, getBundledPreStateBaseJavaScriptFiles } from './assets';
-export { EcodeProjectBuilder } from './builder';
+export { EcodeProjectBuilder } from './builders/project';
 export { EcodeDevProxyServer } from './proxy';
 export { createEcodeDevRuntime, EcodeDevRuntime } from './runtime';
 export {

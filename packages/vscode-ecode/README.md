@@ -77,6 +77,14 @@ Use **eCode: Start Local Debugging** or the play button in the Local view to:
 3. Start a loopback reverse proxy to the active environment's `baseUrl`.
 4. Open the local proxy URL when `autoOpen` is enabled in `ecode.devServer`.
 
+After the initial clean build, source changes use Gulp-style task routing: JS,
+CSS, resources, and pre-state output are rebuilt independently. Application
+metadata, tree ordering, and compiled pre-state fragments stay cached until a
+`.ecode` metadata file changes. A pre-state edit recompiles only that fragment
+before reassembling `init.js` or `init.css`. Changes collected in the same
+watch window are grouped by output target and independent targets run in
+parallel.
+
 The extension bundles `ecode-dev-runtime`, `ecode-sdk.js`, and `wea.js`; an
 eCode project does not need Gulp, BrowserSync, Babel, or its own copy of the
 runtime assets. Use the stop button, the status bar item, or the corresponding

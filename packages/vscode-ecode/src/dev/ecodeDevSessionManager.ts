@@ -253,7 +253,7 @@ export class EcodeDevSessionManager implements vscode.Disposable {
     this.pendingSourceFiles.clear();
     try {
       if (metadataChanged) await runtime.reloadConfiguration();
-      else for (const filePath of files) await runtime.rebuildFile(filePath);
+      else await runtime.rebuildFiles(files);
     } catch (error) {
       this.logger.error('Automatic local eCode rebuild failed.', error);
       this.output.show(true);

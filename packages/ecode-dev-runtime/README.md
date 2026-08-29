@@ -42,7 +42,8 @@ await runtime.dispose();
 The main APIs are:
 
 - `build()` performs a clean build of `dist/dev` and `dist/release`.
-- `rebuildFile(path)` rebuilds the owning app and any affected pre-state output.
+- `rebuildFile(path)` routes the change to the owning app's JavaScript, CSS, resource, or pre-state task.
+- `rebuildFiles(paths)` groups a change batch by output target and rebuilds independent targets in parallel.
 - `reloadConfiguration()` reloads `.ecode/apps` and performs a clean build.
 - `startWatching()` and `stopWatching()` manage the built-in Node watcher.
 - `startProxy()` and `stopProxy()` manage the local reverse proxy.
@@ -50,6 +51,8 @@ The main APIs are:
 - `dispose()` stops all resources and waits for queued builds.
 
 The VS Code extension can use its own `FileSystemWatcher` and call `rebuildFile` or `reloadConfiguration`; it does not need to use the built-in watcher.
+
+During a watch session, released app metadata, app path lookup, the eCode tree, per-app tree ordering, and compiled pre-state fragments are cached. Changes collected in one debounce window are grouped so that each app output is built once while independent JavaScript, CSS, resource, and pre-state targets run in parallel. A pre-state batch recompiles only its changed fragments before writing `init.js` or `init.css` once. Changing `.ecode/apps` or `ecode-tree.json` clears the session caches and performs a clean build.
 
 ## Pre-state base JavaScript
 

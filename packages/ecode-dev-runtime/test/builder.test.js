@@ -107,6 +107,234 @@ describe('EcodeProjectBuilder', () => {
     }
   });
 
+  it('rebuilds CSS without compiling or replacing application JavaScript', async () => {
+    const project = createProject();
+    try {
+      const builder = new EcodeProjectBuilder({ projectRoot: project.root });
+      await builder.build();
+      const outputJavaScript = path.join(project.root, 'dist', 'release', project.appId, 'index.js');
+      const originalJavaScript = fs.readFileSync(outputJavaScript, 'utf8');
+      write(project.root, `src/${project.appPath}/provider.js`, 'const broken = ;');
+      const cssPath = write(project.root, `src/${project.appPath}/style.css`, '.sample { color: purple; }');
+
+      const result = await builder.rebuildFile(cssPath);
+
+      assert.deepEqual(result.builtAppIds, [project.appId]);
+      assert.equal(fs.readFileSync(outputJavaScript, 'utf8'), originalJavaScript);
+      assert.match(
+        fs.readFileSync(path.join(project.root, 'dist', 'release', project.appId, 'index.css'), 'utf8'),
+        /purple/
+      );
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('rebuilds JavaScript without replacing CSS or resources', async () => {
+    const project = createProject();
+    try {
+      const builder = new EcodeProjectBuilder({ projectRoot: project.root });
+      await builder.build();
+      const outputCss = path.join(project.root, 'dist', 'release', project.appId, 'index.css');
+      const originalCss = fs.readFileSync(outputCss, 'utf8');
+      write(project.root, `src/${project.appPath}/style.css`, '.sample { color: orange; }');
+      write(project.root, `src/${project.appPath}/assets/logo.txt`, 'not-copied-yet');
+      const javaScriptPath = write(
+        project.root,
+        `src/${project.appPath}/provider.js`,
+        'ecodeSDK.exp("service"); window.providerLoaded = "updated";'
+      );
+
+      const result = await builder.rebuildFile(javaScriptPath);
+
+      assert.deepEqual(result.builtAppIds, [project.appId]);
+      assert.match(
+        fs.readFileSync(path.join(project.root, 'dist', 'release', project.appId, 'index.js'), 'utf8'),
+        /updated/
+      );
+      assert.equal(fs.readFileSync(outputCss, 'utf8'), originalCss);
+      assert.equal(
+        fs.readFileSync(path.join(project.root, 'dist', 'release', project.appId, 'assets', 'logo.txt'), 'utf8'),
+        'local-resource'
+      );
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('rebuilds a resource without compiling application JavaScript', async () => {
+    const project = createProject();
+    try {
+      const builder = new EcodeProjectBuilder({ projectRoot: project.root });
+      await builder.build();
+      write(project.root, `src/${project.appPath}/provider.js`, 'const broken = ;');
+      const resourcePath = write(project.root, `src/${project.appPath}/assets/logo.txt`, 'updated-resource');
+
+      const result = await builder.rebuildFile(resourcePath);
+
+      assert.deepEqual(result.builtAppIds, [project.appId]);
+      assert.equal(
+        fs.readFileSync(path.join(project.root, 'dist', 'release', project.appId, 'assets', 'logo.txt'), 'utf8'),
+        'updated-resource'
+      );
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('rebuilds pre-state JavaScript without compiling application JavaScript', async () => {
+    const project = createProject();
+    try {
+      const builder = new EcodeProjectBuilder({ projectRoot: project.root });
+      await builder.build();
+      const outputJavaScript = path.join(project.root, 'dist', 'release', project.appId, 'index.js');
+      const originalJavaScript = fs.readFileSync(outputJavaScript, 'utf8');
+      write(project.root, `src/${project.appPath}/provider.js`, 'const broken = ;');
+      const preStatePath = write(
+        project.root,
+        `src/${project.appPath}/pre.js`,
+        'window.preStateApp = "updated-pre-state";'
+      );
+
+      const result = await builder.rebuildFile(preStatePath);
+
+      assert.deepEqual(result.builtAppIds, [project.appId]);
+      assert.equal(fs.readFileSync(outputJavaScript, 'utf8'), originalJavaScript);
+      assert.match(fs.readFileSync(path.join(project.root, 'dist', 'dev', 'init.js'), 'utf8'), /updated-pre-state/);
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('only recompiles the changed pre-state JavaScript file', async () => {
+    const project = createProject();
+    try {
+      project.config.preStateFiles.splice(1, 0, 'pre-other.js');
+      write(project.root, '.ecode/apps/app.json', `${JSON.stringify(project.config, null, 2)}\n`);
+      write(project.root, `src/${project.appPath}/pre-other.js`, 'window.otherPreState = "cached";');
+      const builder = new EcodeProjectBuilder({
+        projectRoot: project.root,
+        preStateBaseJavaScriptFiles: [],
+      });
+      await builder.build();
+
+      write(project.root, `src/${project.appPath}/pre-other.js`, 'const broken = ;');
+      const changedPath = write(project.root, `src/${project.appPath}/pre.js`, 'window.preStateApp = "incremental";');
+      const result = await builder.rebuildFile(changedPath);
+
+      assert.deepEqual(result.builtAppIds, [project.appId]);
+      const initJavaScript = fs.readFileSync(path.join(project.root, 'dist', 'dev', 'init.js'), 'utf8');
+      assert.match(initJavaScript, /incremental/);
+      assert.match(initJavaScript, /otherPreState = "cached"/);
+      assert.doesNotMatch(initJavaScript, /const broken/);
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('only refreshes the changed pre-state CSS fragment', async () => {
+    const project = createProject();
+    try {
+      project.config.preStateFiles.push('pre-other.css');
+      write(project.root, '.ecode/apps/app.json', `${JSON.stringify(project.config, null, 2)}\n`);
+      write(project.root, `src/${project.appPath}/pre-other.css`, '.other-pre-state { color: green; }');
+      const builder = new EcodeProjectBuilder({
+        projectRoot: project.root,
+        preStateBaseJavaScriptFiles: [],
+      });
+      await builder.build();
+
+      write(project.root, `src/${project.appPath}/pre-other.css`, '.other-pre-state { color: orange; }');
+      const changedPath = write(project.root, `src/${project.appPath}/pre.css`, '.pre-state { display: flex; }');
+      const result = await builder.rebuildFile(changedPath);
+
+      assert.deepEqual(result.builtAppIds, [project.appId]);
+      const initCss = fs.readFileSync(path.join(project.root, 'dist', 'dev', 'init.css'), 'utf8');
+      assert.match(initCss, /display: flex/);
+      assert.match(initCss, /color: green/);
+      assert.doesNotMatch(initCss, /color: orange/);
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('updates multiple changed pre-state fragments in one batch', async () => {
+    const project = createProject();
+    try {
+      project.config.preStateFiles.splice(1, 0, 'pre-other.js');
+      project.config.preStateFiles.push('pre-other.css');
+      write(project.root, '.ecode/apps/app.json', `${JSON.stringify(project.config, null, 2)}\n`);
+      write(project.root, `src/${project.appPath}/pre-other.js`, 'window.otherPreState = "initial";');
+      write(project.root, `src/${project.appPath}/pre-other.css`, '.other-pre-state { color: green; }');
+      const builder = new EcodeProjectBuilder({
+        projectRoot: project.root,
+        preStateBaseJavaScriptFiles: [],
+      });
+      await builder.build();
+
+      const changedFiles = [
+        write(project.root, `src/${project.appPath}/pre.js`, 'window.preStateApp = "batch-first";'),
+        write(project.root, `src/${project.appPath}/pre-other.js`, 'window.otherPreState = "batch-second";'),
+        write(project.root, `src/${project.appPath}/pre.css`, '.pre-state { display: grid; }'),
+        write(project.root, `src/${project.appPath}/pre-other.css`, '.other-pre-state { color: purple; }'),
+      ];
+      const result = await builder.rebuildFiles(changedFiles);
+
+      assert.deepEqual(result.builtAppIds, [project.appId]);
+      const initJavaScript = fs.readFileSync(path.join(project.root, 'dist', 'dev', 'init.js'), 'utf8');
+      assert.match(initJavaScript, /batch-first/);
+      assert.match(initJavaScript, /batch-second/);
+      const initCss = fs.readFileSync(path.join(project.root, 'dist', 'dev', 'init.css'), 'utf8');
+      assert.match(initCss, /display: grid/);
+      assert.match(initCss, /color: purple/);
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('rebuilds JavaScript, CSS, and resources from one change batch', async () => {
+    const project = createProject();
+    try {
+      const messages = [];
+      const builder = new EcodeProjectBuilder({
+        projectRoot: project.root,
+        preStateBaseJavaScriptFiles: [],
+        logger: {
+          debug: () => {},
+          info: (message) => messages.push(message),
+          warn: () => {},
+          error: () => {},
+        },
+      });
+      await builder.build();
+      assert.ok(messages.some((message) => message.includes('[1/1] Building eCode app')));
+      assert.ok(messages.some((message) => message.includes('Building global eCode pre-state output')));
+      messages.length = 0;
+
+      const changedFiles = [
+        write(
+          project.root,
+          `src/${project.appPath}/provider.js`,
+          'ecodeSDK.exp("service"); window.providerLoaded = "batch-js";'
+        ),
+        write(project.root, `src/${project.appPath}/consumer.js`, 'window.consumerLoaded = "batch-consumer";'),
+        write(project.root, `src/${project.appPath}/style.css`, '.sample { color: teal; }'),
+        write(project.root, `src/${project.appPath}/assets/logo.txt`, 'batch-resource'),
+      ];
+      const result = await builder.rebuildFiles(changedFiles);
+
+      assert.deepEqual(result.builtAppIds, [project.appId]);
+      const releaseRoot = path.join(project.root, 'dist', 'release', project.appId);
+      assert.match(fs.readFileSync(path.join(releaseRoot, 'index.js'), 'utf8'), /batch-js/);
+      assert.match(fs.readFileSync(path.join(releaseRoot, 'index.js'), 'utf8'), /batch-consumer/);
+      assert.match(fs.readFileSync(path.join(releaseRoot, 'index.css'), 'utf8'), /teal/);
+      assert.equal(fs.readFileSync(path.join(releaseRoot, 'assets', 'logo.txt'), 'utf8'), 'batch-resource');
+      assert.ok(messages.some((message) => message.includes('3 parallel task(s)')));
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
   it('removes stale release output after an app becomes unreleased', async () => {
     const project = createProject();
     try {

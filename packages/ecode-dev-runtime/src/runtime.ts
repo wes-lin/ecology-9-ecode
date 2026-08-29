@@ -1,6 +1,6 @@
 import { existsSync, watch, type FSWatcher } from 'node:fs';
 import * as path from 'node:path';
-import { EcodeProjectBuilder } from './builder';
+import { EcodeProjectBuilder } from './builders/project';
 import { EcodeDevProxyServer } from './proxy';
 import {
   NOOP_DEV_LOGGER,
@@ -32,6 +32,10 @@ export class EcodeDevRuntime {
 
   rebuildFile(filePath: string): Promise<EcodeDevBuildResult> {
     return this.enqueue(() => this.builder.rebuildFile(filePath));
+  }
+
+  rebuildFiles(filePaths: string[]): Promise<EcodeDevBuildResult> {
+    return this.enqueue(() => this.builder.rebuildFiles(filePaths));
   }
 
   reloadConfiguration(): Promise<EcodeDevBuildResult> {
@@ -118,12 +122,7 @@ export class EcodeDevRuntime {
       const metadataChanged = files.some(
         (filePath) => path.basename(filePath) === 'ecode-tree.json' || filePath.includes(`${path.sep}apps${path.sep}`)
       );
-      const operation = metadataChanged
-        ? this.reloadConfiguration()
-        : files.reduce<Promise<EcodeDevBuildResult | undefined>>(
-            (previous, filePath) => previous.then(() => this.rebuildFile(filePath)),
-            Promise.resolve(undefined)
-          );
+      const operation = metadataChanged ? this.reloadConfiguration() : this.rebuildFiles(files);
       operation.catch((error) => this.logger.error('Automatic eCode rebuild failed.', error));
     }, this.options.watchDebounceMs ?? 80);
   }
