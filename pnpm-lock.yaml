@@ -52,6 +52,9 @@ importers:
       ecode-dev-runtime:
         specifier: workspace:*
         version: link:../ecode-dev-runtime
+      ecode-sdk:
+        specifier: workspace:*
+        version: link:../ecode-sdk
     devDependencies:
       '@types/vscode':
         specifier: ^1.80.0

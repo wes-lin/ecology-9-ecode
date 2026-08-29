@@ -661,7 +661,8 @@
     "test": "echo 'No tests yet'"
   },
   "dependencies": {
-    "ecode-dev-runtime": "workspace:*"
+    "ecode-dev-runtime": "workspace:*",
+    "ecode-sdk": "workspace:*"
   },
   "license": "ISC",
   "devDependencies": {

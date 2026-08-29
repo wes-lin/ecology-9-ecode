@@ -13,6 +13,7 @@ on:
         options:
           - all
           - sdk
+          - runtime
           - plugin
       prerelease:
         type: boolean
@@ -59,6 +60,47 @@ jobs:
       - name: Publish SDK
         working-directory: packages/ecode-sdk
         run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
+
+  publish-runtime:
+    name: Publish development runtime to npm
+    needs: publish-sdk
+    if: >-
+      ${{ always() &&
+          (inputs.target == 'all' || inputs.target == 'runtime') &&
+          (inputs.target != 'all' || needs.publish-sdk.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test development runtime
+        run: pnpm --filter ecode-dev-runtime test
+
+      - name: Publish development runtime
+        working-directory: packages/ecode-dev-runtime
+        run: pnpm publish --access public --provenance --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
 
