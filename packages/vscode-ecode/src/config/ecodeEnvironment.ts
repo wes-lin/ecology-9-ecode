@@ -55,9 +55,7 @@ export function getActiveEcodeEnvironmentRoot(config: vscode.WorkspaceConfigurat
 
 export function getEcodeEnvironmentError(environment: EcodeEnvironmentConfig | undefined): string | undefined {
   if (!environment) return 'No eCode environment configured.';
-  if (!environment.baseUrl || environment.baseUrl === 'http://localhost') {
-    return `Environment "${environment.name}" is missing baseUrl.`;
-  }
+  if (!environment.baseUrl) return `Environment "${environment.name}" is missing baseUrl.`;
   if (!environment.username) return `Environment "${environment.name}" is missing username.`;
   if (!environment.password) return `Environment "${environment.name}" is missing password.`;
   if (!environment.localDir) return `Environment "${environment.name}" is missing localDir.`;

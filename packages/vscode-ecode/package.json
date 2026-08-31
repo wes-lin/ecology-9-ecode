@@ -3,7 +3,7 @@
   "displayName": "Weaver Ecology eCode",
   "description": "Develop, debug, synchronize, and publish Weaver Ecology 9 eCode apps in VS Code",
   "icon": "assets/ecode.png",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "ecode-dev-assistant",
   "repository": {
     "url": "https://github.com/wes-lin/ecology-9-ecode/tree/main/packages/vscode-ecode"
