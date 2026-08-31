@@ -1,9 +1,9 @@
 {
   "name": "vscode-ecode",
-  "displayName": "eCode Dev Assistant",
-  "description": "Develop, debug, synchronize, and publish Ecology 9 eCode apps in VS Code",
+  "displayName": "Weaver Ecology eCode",
+  "description": "Develop, debug, synchronize, and publish Weaver Ecology 9 eCode apps in VS Code",
   "icon": "assets/ecode.png",
-  "version": "0.0.14",
+  "version": "0.1.0",
   "publisher": "ecode-dev-assistant",
   "repository": {
     "url": "https://github.com/wes-lin/ecology-9-ecode/tree/main/packages/vscode-ecode"
@@ -12,7 +12,17 @@
     "vscode": "^1.83.0"
   },
   "categories": [
+    "Debuggers",
     "Other"
+  ],
+  "keywords": [
+    "weaver",
+    "ecology",
+    "ecology 9",
+    "ecode",
+    "泛微",
+    "local development",
+    "debugging"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
