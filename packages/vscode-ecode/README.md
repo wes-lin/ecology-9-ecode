@@ -21,8 +21,6 @@ A VS Code extension for local and remote Weaver Ecology 9 eCode development. It 
 - A Weaver Ecology 9 server with eCode API access
 - A local workspace for downloaded or locally maintained eCode sources
 
-The extension package bundles its runtime dependencies and base scripts. An eCode project does not need its own Gulp, BrowserSync, Babel, `ecode-sdk.js`, or `wea.js` setup.
-
 ## Environments and Settings
 
 Use the gear action in either view, or run `eCode: Settings`, to open the visual settings editor.
