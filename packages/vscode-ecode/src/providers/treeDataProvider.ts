@@ -12,27 +12,31 @@ import {
   getActiveEcodeEnvironmentRoot,
   getEcodeEnvironmentError,
 } from '../config/ecodeEnvironment';
+import { EcodeSettingsRepository } from '../config/ecodeSettingsRepository';
 import { BaseEcodeTreeDataProvider, type EcodeTreeItemPresentation } from './baseTreeDataProvider';
-
-function toBytes(content: string | Buffer): Uint8Array {
-  return Buffer.isBuffer(content) ? content : Buffer.from(String(content), 'utf8');
-}
+import { RemoteDocumentStore } from './remote/documentStore';
+import { RemoteEcodeOperations } from './remote/operations';
 
 export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
   rootItems: EcodeNode[] = [];
   private _busy = false;
   private readonly _output = vscode.window.createOutputChannel('eCode');
   private readonly _clientProvider: ActiveEcodeClientProvider;
+  private readonly _settings: EcodeSettingsRepository;
 
-  // 文件内容缓存：完整 URI → 内容字节。query 不同的 diff 文档不会相互覆盖。
-  private readonly _fileContents = new Map<string, Uint8Array>();
-  // 只有从 Remote 树直接打开的可编辑代码文件才会登记在此。
-  private readonly _writableRemoteFiles = new Map<string, EcodeNode>();
+  private readonly _documents = new RemoteDocumentStore();
+  private readonly _operations: RemoteEcodeOperations;
   private _fsRegistration: vscode.Disposable;
 
-  constructor(storageRoot: string, clientProvider = new ActiveEcodeClientProvider(storageRoot)) {
+  constructor(
+    storageRoot: string,
+    clientProvider = new ActiveEcodeClientProvider(storageRoot),
+    settings = new EcodeSettingsRepository()
+  ) {
     super();
     this._clientProvider = clientProvider;
+    this._settings = settings;
+    this._operations = new RemoteEcodeOperations(clientProvider);
 
     // 注册可写 FileSystemProvider；具体 URI 是否可写由 stat/writeFile 判断。
     const fileSystemProvider = new EcodeFileSystemProvider(this);
@@ -50,8 +54,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
 
     this._clientProvider.clear();
     this.rootItems = [];
-    this._fileContents.clear();
-    this._writableRemoteFiles.clear();
+    this._documents.clear();
     this._onDidChangeTreeData.fire();
   }
 
@@ -207,13 +210,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     try {
       const content = await this._readRemoteContent(element);
       const uri = this._getRemoteUri(element);
-      const key = this._getRemoteFileKey(uri);
-      this._fileContents.set(key, toBytes(content));
-      if (this._isRemoteFileEditable(element)) {
-        this._writableRemoteFiles.set(key, element);
-      } else {
-        this._writableRemoteFiles.delete(key);
-      }
+      this._documents.open(uri, content, this._isRemoteFileEditable(element) ? element : undefined);
 
       await vscode.commands.executeCommand('vscode.open', uri, { preview: false });
     } catch (error) {
@@ -223,33 +220,27 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
 
   handleRemoteFileClosed(document: vscode.TextDocument): void {
     if (document.uri.scheme === 'ecode') {
-      const key = this._getRemoteFileKey(document.uri);
-      this._fileContents.delete(key);
-      this._writableRemoteFiles.delete(key);
+      this._documents.close(document.uri);
     }
   }
 
   getRemoteFileContent(uri: vscode.Uri): Uint8Array | undefined {
-    return this._fileContents.get(this._getRemoteFileKey(uri));
+    return this._documents.getContent(uri);
   }
 
   isRemoteFileWritable(uri: vscode.Uri): boolean {
-    return this._writableRemoteFiles.has(this._getRemoteFileKey(uri));
+    return this._documents.isWritable(uri);
   }
 
   async updateRemoteFile(uri: vscode.Uri, content: Uint8Array): Promise<void> {
-    const key = this._getRemoteFileKey(uri);
-    const element = this._writableRemoteFiles.get(key);
+    const element = this._documents.getWritableElement(uri);
     if (!element) throw new Error('Remote file metadata is unavailable. Reopen the file and try again.');
 
     const text = Buffer.from(content).toString('utf8');
     const extension = this._getNodeFileExtension(element)?.toLowerCase();
     try {
-      const response = await this._getClient().updateFile(this._requireNodeId(element), text, extension === 'js');
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`);
-      }
-      this._fileContents.set(key, Uint8Array.from(content));
+      await this._operations.updateFile(element, text, extension === 'js');
+      this._documents.setContent(uri, content);
     } catch (error) {
       throw new Error(`Save remote file "${element.label}" failed: ${getErrorMessage(error)}`);
     }
@@ -274,7 +265,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
       });
       const localUri = vscode.Uri.file(targetPath);
 
-      this._fileContents.set(this._getRemoteFileKey(remoteUri), toBytes(remoteContent));
+      this._documents.open(remoteUri, remoteContent);
       await vscode.commands.executeCommand('vscode.diff', remoteUri, localUri, `${element.label}: Remote ↔ Local`);
     } catch (error) {
       vscode.window.showErrorMessage(`Compare failed: ${getErrorMessage(error)}`);
@@ -300,16 +291,9 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     );
     if (confirm !== 'Delete') return;
 
-    const client = this._getClient();
     await this._withNodeLoading(element, async () => {
       try {
-        if (element.businessType === 'type') {
-          await client.deleteType(this._requireNodeId(element));
-        } else if (element.type === 'file') {
-          await client.deleteFile(this._requireNodeId(element));
-        } else {
-          await client.deleteFolder(this._requireNodeId(element));
-        }
+        await this._operations.delete(element);
         await this._refreshStructuralParent(element);
       } catch (error) {
         vscode.window.showErrorMessage(`Delete ${kind} failed: ${getErrorMessage(error)}`);
@@ -318,10 +302,9 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
   }
 
   async release(element: EcodeNode): Promise<void> {
-    const client = this._getClient();
     await this._withNodeLoading(element, async () => {
       try {
-        await client.release(element.appId);
+        await this._operations.release(element);
         await this._updateAppStatus(element, { appStatus: 'released' });
       } catch (e) {
         vscode.window.showErrorMessage(`${element.label} release fail, error:${e}`);
@@ -330,10 +313,9 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
   }
 
   async cancelRelease(element: EcodeNode): Promise<void> {
-    const client = this._getClient();
     await this._withNodeLoading(element, async () => {
       try {
-        await client.deleteReleaseFile(element.appId);
+        await this._operations.cancelRelease(element);
         await this._updateAppStatus(element, { appStatus: '' });
       } catch (e) {
         vscode.window.showErrorMessage(`${element.label} cancel release fail, error:${e}`);
@@ -342,10 +324,9 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
   }
 
   async setPreload(element: EcodeNode): Promise<void> {
-    const client = this._getClient();
     await this._withNodeLoading(element, async () => {
       try {
-        await client.markFile(element.id as string, 'pre-state');
+        await this._operations.setPreload(element, true);
         await this._updatePreloadState(element, true);
       } catch (e) {
         vscode.window.showErrorMessage(`${element.label} set preload fail, error:${e}`);
@@ -354,10 +335,9 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
   }
 
   async cancelPreload(element: EcodeNode): Promise<void> {
-    const client = this._getClient();
     await this._withNodeLoading(element, async () => {
       try {
-        await client.markFile(element.id as string);
+        await this._operations.setPreload(element, false);
         await this._updatePreloadState(element, false);
       } catch (e) {
         vscode.window.showErrorMessage(`${element.label} cancel preload  fail, error:${e}`);
@@ -374,11 +354,10 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     });
     if (value === undefined) return;
 
-    const client = this._getClient();
     await this._withNodeLoading(element, async () => {
       try {
         const appPreStateOrder = Number.parseInt(value.trim(), 10);
-        await client.setPreStateOrder(element.appId, appPreStateOrder);
+        await this._operations.setPreloadOrder(element, appPreStateOrder);
         await this._updateAppStatus(element, { appPreStateOrder });
       } catch (e) {
         vscode.window.showErrorMessage(`${element.label} Set preload order  fail, error:${e}`);
@@ -395,10 +374,9 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     const name = await this._promptForName({ title: 'Create New App', kind: 'app' });
     if (!name) return;
 
-    const client = this._getClient();
     await this._withNodeLoading(element, async () => {
       try {
-        await client.addFolder(name, undefined, this._requireNodeId(element));
+        await this._operations.createApp(element, name);
         await this.refreshFolder(element);
       } catch (error) {
         vscode.window.showErrorMessage(`Create app failed: ${getErrorMessage(error)}`);
@@ -415,10 +393,9 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     const name = await this._promptForName({ title: 'Create New Type', kind: 'type' });
     if (!name) return;
 
-    const client = this._getClient();
     await this._withNodeLoading(element, async () => {
       try {
-        await client.addType(name, this._requireNodeId(element));
+        await this._operations.createType(element, name);
         await this.refreshFolder(element);
       } catch (error) {
         vscode.window.showErrorMessage(`Create type failed: ${getErrorMessage(error)}`);
@@ -435,10 +412,9 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     const name = await this._promptForName({ title: 'Create New Folder', kind: 'folder' });
     if (!name) return;
 
-    const client = this._getClient();
     await this._withNodeLoading(element, async () => {
       try {
-        await client.addFolder(name, this._requireNodeId(element));
+        await this._operations.createFolder(element, name);
         await this.refreshFolder(element);
       } catch (error) {
         vscode.window.showErrorMessage(`Create folder failed: ${getErrorMessage(error)}`);
@@ -459,10 +435,9 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     });
     if (!name) return;
 
-    const client = this._getClient();
     await this._withNodeLoading(element, async () => {
       try {
-        await client.addFile(this._requireNodeId(element), name, extension);
+        await this._operations.createFile(element, name, extension);
         await this.refreshFolder(element);
       } catch (error) {
         vscode.window.showErrorMessage(`Create ${extension.toUpperCase()} file failed: ${getErrorMessage(error)}`);
@@ -481,16 +456,9 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     });
     if (!name) return;
 
-    const client = this._getClient();
     await this._withNodeLoading(element, async () => {
       try {
-        if (element.businessType === 'type') {
-          await client.updateTypeName(this._requireNodeId(element), name);
-        } else if (element.type === 'file') {
-          await client.updateFileName(this._requireNodeId(element), name);
-        } else {
-          await client.updateFolderName(this._requireNodeId(element), name);
-        }
+        await this._operations.rename(element, name);
         await this._refreshStructuralParent(element);
       } catch (error) {
         vscode.window.showErrorMessage(`Rename ${kind} failed: ${getErrorMessage(error)}`);
@@ -514,8 +482,6 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     const file = selected?.[0];
     if (!file) return;
 
-    const client = this._getClient();
-    const folderId = this._requireNodeId(element);
     const fileName = path.basename(file.fsPath);
     await this._withNodeLoading(element, async () => {
       try {
@@ -526,10 +492,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
             cancellable: false,
           },
           async () => {
-            const response = await client.uploadResource(file.fsPath, folderId);
-            if (!response.ok) {
-              throw new Error(`HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`);
-            }
+            await this._operations.uploadResource(element, file.fsPath);
           }
         );
         await this.refreshFolder(element);
@@ -538,13 +501,6 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
         vscode.window.showErrorMessage(`Upload resource "${fileName}" failed: ${getErrorMessage(error)}`);
       }
     });
-  }
-
-  _requireNodeId(element: EcodeNode): string {
-    if (!element.id) {
-      throw new Error(`${this._getNodeKindLabel(element)} id is missing.`);
-    }
-    return element.id;
   }
 
   async _refreshStructuralParent(element: EcodeNode): Promise<void> {
@@ -620,10 +576,6 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     return vscode.Uri.parse(`ecode:/${element.remotePath}`);
   }
 
-  _getRemoteFileKey(uri: vscode.Uri): string {
-    return uri.toString();
-  }
-
   _isRemoteFileEditable(element: EcodeNode): boolean {
     if (element.type !== 'file' || !element.id) return false;
     return (
@@ -660,11 +612,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
   }
 
   async _readRemoteContent(element: EcodeNode): Promise<string | Buffer> {
-    const client = this._getClient();
-    if (element.treeType === 'resource') {
-      return client.viewResource(element.route);
-    }
-    return client.viewFile(element.id ?? '');
+    return this._operations.readContent(element);
   }
 
   _getEnvironmentRootPath(): string {
@@ -684,7 +632,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
   }
 
   _getConfig(): vscode.WorkspaceConfiguration {
-    return vscode.workspace.getConfiguration('ecode');
+    return this._settings.configuration;
   }
 
   _getActiveEnvironment() {

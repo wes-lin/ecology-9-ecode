@@ -1,6 +1,14 @@
 # ecode-sdk
 
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
 JavaScript SDK for Ecology 9 ecode APIs.
+
+## Installation
+
+```bash
+npm install ecode-sdk
+```
 
 ## API
 
@@ -138,3 +146,12 @@ deterministic.
 The SDK uses the modern Node.js global `fetch`, `FormData`, and `Blob` APIs for
 requests and uploads. It maintains a cookie jar automatically, so `login()`
 stores the session cookie and subsequent requests carry it automatically.
+
+## Development
+
+From the repository root:
+
+```bash
+pnpm --filter ecode-sdk build
+pnpm --filter ecode-sdk test
+```

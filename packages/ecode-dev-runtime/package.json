@@ -1,0 +1,28 @@
+{
+  "name": "ecode-dev-runtime",
+  "version": "0.1.0",
+  "description": "Reusable local build, watch, and proxy runtime for Ecology 9 eCode projects",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "ecode-dev": "dist/cli.js"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "assets/**",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "pnpm run build && node --test test/*.test.js"
+  },
+  "dependencies": {
+    "ecode-sdk": "workspace:*"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "license": "ISC"
+}

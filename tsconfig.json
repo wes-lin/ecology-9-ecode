@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "./packages/ecode-sdk" },
+    { "path": "./packages/ecode-dev-runtime" },
     { "path": "./packages/vscode-ecode" }
   ]
 }
