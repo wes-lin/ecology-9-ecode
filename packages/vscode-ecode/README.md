@@ -1,104 +1,148 @@
-# vscode-ecode
+# Weaver Ecology eCode for VS Code
 
-VS Code extension for local and remote Ecology 9 eCode development.
+English | [简体中文](./README.zh-CN.md)
 
-## Views
+A VS Code extension for local and remote Weaver Ecology 9 eCode development. It integrates `ecode-sdk` for remote operations and `ecode-dev-runtime` for local compilation, incremental rebuilds, and proxy-based debugging.
 
-The eCode Activity Bar container contains two views:
+## Features
 
-- **Local** is the upper view and is backed by local files.
-- **Remote** is the lower view and is backed by the remote eCode API.
+- Manage multiple Ecology environments and switch the active environment from either eCode view.
+- Display the active environment directly in the Local and Remote view titles.
+- Download remote projects and maintain local eCode metadata.
+- Create and edit apps, types, folders, code files, and resources locally or remotely.
+- Compare local files with their current remote content.
+- Select and publish one or more local apps to the active environment.
+- Build local apps, watch source changes, and debug them through a local reverse proxy.
+- Reuse valid output from earlier sessions and incrementally compile offline changes.
 
-Use the gear button in either view, or run **eCode: Manage Settings** from the
-Command Palette, to open the visual settings editor. It manages the standalone
-local development server configuration as well as adding, removing, reordering,
-and selecting environments. Saving the form updates `ecode.devServer`,
-`ecode.environments`, and `ecode.activeEnvironment`.
+## Requirements
 
-Running **Download** from the Local view downloads source files to
-`<localDir>/src` and replaces `<localDir>/.ecode/ecode-tree.json` with the
-latest complete remote tree. Existing local source files are overwritten with
-their latest remote contents. `localDir` defaults to `./`, the current workspace
-directory.
+- VS Code 1.83.0 or later
+- A Weaver Ecology 9 server with eCode API access
+- A local workspace for downloaded or locally maintained eCode sources
 
-## Configuration Files
+The extension package bundles its runtime dependencies and base scripts. An eCode project does not need its own Gulp, BrowserSync, Babel, `ecode-sdk.js`, or `wea.js` setup.
 
-Metadata is stored under `<localDir>/.ecode`:
+## Environments and Settings
 
-- `ecode-tree.json` is the only local node tree. Download replaces it, and all
-  local tree operations read and write it directly.
-- `apps/<id>.json` is generated from `ecode-tree.json`. Each file contains
-  the app path, status, preload metadata, resources, configs, and debug mode.
+Use the gear action in either view, or run `eCode: Settings`, to open the visual settings editor.
 
-The extension watches `ecode-tree.json` and regenerates the app files whenever
-the tree is created, changed, or deleted. App JSON files no longer represented
-by the tree are removed. The generation API is provided by `ecode-sdk` so Node
-scripts can reuse the same behavior.
+The **Environments** page manages environment records containing:
 
-Locally created apps and types use 32-character UUIDs without separators or a
-`local-` prefix. A locally created app uses the same UUID for its node ID,
-`appId`, and app JSON filename. Other locally created folders and files use
-`local-<UUID>` IDs so the extension can distinguish them from downloaded nodes.
+- Name
+- Ecology server URL
+- Login account and password
+- Local project directory
 
-## Local Operations
+The **Local Debug** page configures:
 
-The Local view supports the same structural and app operations as the Remote
-view:
+- Local proxy host and port
+- Automatic browser opening and the initial path
+- TLS certificate verification
+- Upstream `Host` header rewriting
 
-- Create apps, types, folders, and JS/CSS/Markdown files.
-- Add files to local resource nodes.
-- Rename and delete nodes.
-- Set app release status and preload order.
-- Set or clear file preload state.
-- Compare an existing local file with its current remote content.
-- Select and publish local apps to the active eCode environment.
+Environment switching is intentionally kept outside the settings page. Use **Switch Environment** in either the Local or Remote view. The picker shows only the environment name and server address. Changing the active environment refreshes both trees and stops a running local debug session so it cannot continue against stale configuration.
 
-Local structural and file operations are persisted locally. **Publish Local
-Apps** is the remote operation: it builds one package per selected app, uploads
-each package, and imports it into the active environment. Publishing enters a
-selection mode directly in the existing Local tree. Only apps represented by
-Local tree nodes with an `appId` participate: folder checkboxes select or clear
-all descendant apps, and app checkboxes can be changed individually. Publishing
-passes app metadata collected from `ecode-tree.json` directly to the SDK.
+Relative local directories are resolved from the current VS Code workspace. Credentials are stored in VS Code configuration; do not commit workspace settings containing real passwords.
 
-The built-in VS Code Explorer has no eCode context menu.
+## Local View
 
-Opening a code file in the Remote view displays editable remote content without
-downloading or creating a local file. Saving the editor writes the updated
-content directly to the active eCode environment. Remote resources, JAR files,
-and the remote side of a comparison remain read-only.
+The Local view is backed by files under the active environment's local project directory. It supports:
+
+- Creating apps, types, folders, and JavaScript, CSS, or Markdown files
+- Adding resource files
+- Renaming and deleting nodes
+- Setting app release status and preload order
+- Setting or clearing file preload state
+- Opening local files and comparing them with remote content
+- Selecting apps or folders and publishing the represented apps
+
+Local structural changes update `.ecode/ecode-tree.json`; generated `.ecode/apps/<appId>.json` files stay synchronized with that tree.
+
+**Upload Apps** enters checkbox selection mode in the Local tree. Folder checkboxes select descendant apps and app checkboxes can be changed individually. **Publish Apps** builds one package per selected app, uploads it, and imports it into the active environment with the app's release and preload metadata.
+
+## Remote View
+
+The Remote view loads its tree from the active Ecology environment. It supports remote structural operations and direct code editing.
+
+Opening a remote JavaScript, CSS, or Markdown file creates an editable virtual document without downloading it into the project. Saving writes the content to the active environment. Remote resources, JAR files, and the remote side of comparison editors remain read-only.
+
+## Download and Local Metadata
+
+Running **Download** from the Local view downloads source files to `<localDir>/src`, overwrites existing remote-backed source files, and replaces `<localDir>/.ecode/ecode-tree.json` with the latest complete remote tree.
+
+The extension watches `ecode-tree.json` and regenerates `.ecode/apps` whenever the tree is created, changed, or deleted. Stale generated app files are removed automatically.
+
+Locally created apps and types use 32-character UUIDs without separators. Other locally created folders and files use `local-<UUID>` identifiers so they can be distinguished from downloaded nodes.
 
 ## Local Debugging
 
-Use **eCode: Start Local Debugging** or the play button in the Local view to:
+Run `eCode: Start Local Debugging`, or use the start action in the Local view, to:
 
-1. Prepare released local apps in `<localDir>/dist`, reusing valid output from the previous session.
-2. Watch `src` and `.ecode` for incremental rebuilds.
-3. Start a loopback reverse proxy to the active environment's `baseUrl`.
-4. Open the local proxy URL when `autoOpen` is enabled in `ecode.devServer`.
+1. Read the local tree and app metadata.
+2. Reuse valid previous output or incrementally compile source changes made between sessions.
+3. Watch `src` and `.ecode` for further changes.
+4. Start a loopback reverse proxy targeting the active environment.
+5. Open the proxied Ecology page when automatic opening is enabled.
 
-After the initial clean build, source changes use Gulp-style task routing: JS,
-CSS, resources, and pre-state output are rebuilt independently. Application
-metadata, tree ordering, and compiled pre-state fragments stay cached until a
-`.ecode` metadata file changes. A pre-state edit recompiles only that fragment
-before reassembling `init.js` or `init.css`. Changes collected in the same
-watch window are grouped by output target and independent targets run in
-parallel.
+JavaScript, CSS, resources, and pre-state files are routed to independent build tasks. Changes gathered in one debounce window are grouped by output target, and unrelated targets run in parallel. A changed pre-state file recompiles only its fragment before `init.js` or `init.css` is assembled once.
 
-Local Debugging persists file and output signatures plus compiled pre-state
-fragments in `dist/.ecode-dev-runtime/build-state.json`. When the next session
-starts with no changes, it skips compilation. Source changes made while
-debugging was stopped are rebuilt incrementally; changed metadata, missing
-output, or an incompatible cache automatically triggers a clean build. The
-manual build command always performs a clean build.
+Reusable build state is stored at `dist/.ecode-dev-runtime/build-state.json`. Unchanged startup skips compilation; missing output, changed metadata, or incompatible cache data triggers a clean build. The manual `eCode: Build Local Apps` command always performs a clean build.
 
-The extension bundles `ecode-dev-runtime`, `ecode-sdk.js`, and `wea.js`; an
-eCode project does not need Gulp, BrowserSync, Babel, or its own copy of the
-runtime assets. Use the stop button, the status bar item, or the corresponding
-commands to manage the session. Changing the active environment or any
-`ecode.devServer` setting stops the current session so it cannot continue
-proxying to stale configuration.
+Local proxy routes include:
 
-The standalone `ecode.devServer` object contains `host`, `port`, `autoOpen`,
-`openPath`, `strictSSL`, and `changeOrigin`. It is editable in **Manage
-Settings** and is independent from the active OA environment.
+- `/cloudstore/dev/init.js`
+- `/cloudstore/dev/init.css`
+- `/cloudstore/release/**`
+
+Other HTTP and WebSocket requests are forwarded to the active Ecology server.
+
+## Project Layout
+
+```text
+<localDir>/
+├─ .ecode/
+│  ├─ ecode-tree.json
+│  └─ apps/<appId>.json
+├─ src/
+└─ dist/
+   ├─ dev/
+   ├─ release/
+   └─ .ecode-dev-runtime/build-state.json
+```
+
+The local runtime owns `dist/dev`, `dist/release`, and its build-state file. Other directories, such as `dist/app-upgrade`, are preserved.
+
+## Main Commands
+
+| Command                          | Purpose                                            |
+| -------------------------------- | -------------------------------------------------- |
+| `eCode: Settings`                | Manage environments and local debug settings.      |
+| `eCode: Switch Environment`      | Change the active environment.                     |
+| `eCode: Start Local Debugging`   | Prepare output, start watching, and run the proxy. |
+| `eCode: Stop Local Debugging`    | Stop the current local debug session.              |
+| `eCode: Restart Local Debugging` | Restart the debug session with current settings.   |
+| `eCode: Build Local Apps`        | Perform a clean local build.                       |
+| `eCode: Open Local Ecology`      | Open the running local proxy in a browser.         |
+
+Additional create, rename, delete, upload, release, preload, download, and compare actions are available from the view title bars and tree context menus.
+
+## Development
+
+From the repository root:
+
+```bash
+pnpm install
+pnpm --filter vscode-ecode build
+```
+
+Open the repository in VS Code, select `Run Extension (vscode-ecode)`, and press `F5`.
+
+Create a production bundle or VSIX package with:
+
+```bash
+pnpm --filter vscode-ecode build:production
+pnpm --filter vscode-ecode package
+```
+
+VSIX files are written to `packages/vscode-ecode/releases`.

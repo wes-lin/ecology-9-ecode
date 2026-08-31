@@ -1,6 +1,14 @@
 # ecode-dev-runtime
 
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
 Reusable local build, watch, and reverse-proxy runtime for Ecology 9 eCode projects. It has no VS Code dependency, so the same implementation can be embedded in the `vscode-ecode` extension or invoked from a command line.
+
+## Installation
+
+```bash
+npm install ecode-dev-runtime
+```
 
 ## Project contract
 
@@ -90,3 +98,12 @@ ecode-dev proxy --project . --target https://ecology.example.com
 ```
 
 `ECODE_PROXY_TARGET` can be used instead of `--target`. Use `--allow-insecure` only for a trusted development server with a self-signed TLS certificate.
+
+## Development
+
+From the repository root:
+
+```bash
+pnpm --filter ecode-dev-runtime build
+pnpm --filter ecode-dev-runtime test
+```
