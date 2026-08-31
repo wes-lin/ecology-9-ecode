@@ -4,7 +4,7 @@ export function createEnvironmentSettingsHtml(webview: vscode.Webview, extension
   const nonce = createNonce();
   const assetRoot = vscode.Uri.joinPath(extensionUri, 'assets', 'settings');
   const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(assetRoot, 'settings.css'));
-  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(assetRoot, 'settings.js'));
+  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'dist', 'webviews', 'settings.js'));
 
   return /* html */ `<!doctype html>
 <html lang="en">
@@ -32,20 +32,10 @@ export function createEnvironmentSettingsHtml(webview: vscode.Webview, extension
         </div>
       </header>
       <div class="settings-layout">
-        <aside class="settings-sidebar" aria-label="Settings navigation">
-          <button id="dev-server-nav" class="nav-item nav-primary" type="button">
-            <span class="nav-icon">D</span>
-            <span>
-              <strong>Local Debug</strong>
-              <small>Proxy and browser</small>
-            </span>
-          </button>
-          <div class="nav-section-header">
-            <span>Environments</span>
-            <button id="add-environment" class="icon-button" type="button" title="Add environment" aria-label="Add environment">+</button>
-          </div>
-          <div id="environment-nav" class="environment-nav"></div>
-        </aside>
+        <nav class="settings-tabs" aria-label="Settings sections" role="tablist">
+          <button id="dev-server-nav" class="settings-tab" type="button" role="tab">Local Debug</button>
+          <button id="environments-nav" class="settings-tab" type="button" role="tab">Environments</button>
+        </nav>
         <section id="settings-detail" class="settings-detail" aria-live="polite"></section>
       </div>
     </form>

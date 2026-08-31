@@ -1,24 +1,20 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { DEFAULT_ECODE_DEV_SERVER, getEcodeDevServer, type EcodeDevServerConfig } from '../config/ecodeDevServer';
-import { EcodeEnvironmentConfig, getEcodeEnvironments } from '../config/ecodeEnvironment';
+import { DEFAULT_ECODE_DEV_SERVER, type EcodeDevServerConfig } from '../config/ecodeDevServer';
+import { type EcodeEnvironmentConfig } from '../config/ecodeEnvironment';
+import { EcodeSettingsRepository } from '../config/ecodeSettingsRepository';
 import { getErrorMessage } from '../utils/errors';
 import { createEnvironmentSettingsHtml } from '../webviews/environmentSettingsHtml';
-
-type EnvironmentManagerMessage = {
-  command?: unknown;
-  environments?: unknown;
-  devServer?: unknown;
-  activeIndex?: unknown;
-  index?: unknown;
-  name?: unknown;
-};
+import type { EnvironmentSettingsRequest } from '../webviews/environmentSettingsMessages';
 
 export class EcodeEnvironmentManager implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
   private readonly disposables: vscode.Disposable[] = [];
 
-  constructor(private readonly extensionUri: vscode.Uri) {}
+  constructor(
+    private readonly extensionUri: vscode.Uri,
+    private readonly settings = new EcodeSettingsRepository()
+  ) {}
 
   show(): void {
     if (this.panel) {
@@ -27,6 +23,7 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
     }
 
     const settingsAssetRoot = vscode.Uri.joinPath(this.extensionUri, 'assets', 'settings');
+    const settingsScriptRoot = vscode.Uri.joinPath(this.extensionUri, 'dist', 'webviews');
     const panel = vscode.window.createWebviewPanel(
       'ecode.environmentManager',
       'eCode Settings',
@@ -34,7 +31,7 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
       {
         enableScripts: true,
         retainContextWhenHidden: true,
-        localResourceRoots: [settingsAssetRoot],
+        localResourceRoots: [settingsAssetRoot, settingsScriptRoot],
       }
     );
     this.panel = panel;
@@ -48,7 +45,7 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
       this.disposables
     );
     panel.webview.onDidReceiveMessage(
-      (message: EnvironmentManagerMessage) => this.handleMessage(message),
+      (message: EnvironmentSettingsRequest) => this.handleMessage(message),
       undefined,
       this.disposables
     );
@@ -59,7 +56,7 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
     for (const disposable of this.disposables.splice(0)) disposable.dispose();
   }
 
-  private async handleMessage(message: EnvironmentManagerMessage): Promise<void> {
+  private async handleMessage(message: EnvironmentSettingsRequest): Promise<void> {
     switch (message.command) {
       case 'ready':
         await this.postState();
@@ -81,10 +78,9 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
 
   private async postState(): Promise<void> {
     if (!this.panel) return;
-    const config = vscode.workspace.getConfiguration('ecode');
-    const environments = getEcodeEnvironments(config);
-    const devServer = getEcodeDevServer(config);
-    const configuredActiveName = config.get<string>('activeEnvironment', '');
+    const environments = this.settings.environments;
+    const devServer = this.settings.devServer;
+    const configuredActiveName = this.settings.activeEnvironmentName;
     const activeIndex = Math.max(
       0,
       environments.findIndex((environment) => environment.name === configuredActiveName)
@@ -98,16 +94,11 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
       const devServer = this.validateDevServer(rawDevServer);
       const activeIndex = typeof rawActiveIndex === 'number' ? rawActiveIndex : 0;
       const activeEnvironment = environments[activeIndex] ?? environments[0];
-      const config = vscode.workspace.getConfiguration('ecode');
-      const environmentTarget = this.getConfigurationTarget(config, 'environments');
-
-      await config.update('environments', environments, environmentTarget);
-      await config.update(
-        'activeEnvironment',
-        activeEnvironment?.name ?? '',
-        this.getConfigurationTarget(config, 'activeEnvironment')
-      );
-      await config.update('devServer', devServer, environmentTarget);
+      await this.settings.save({
+        environments,
+        activeEnvironment: activeEnvironment?.name ?? '',
+        devServer,
+      });
       await this.panel?.webview.postMessage({
         type: 'saved',
         environments,
@@ -191,17 +182,6 @@ export class EcodeEnvironmentManager implements vscode.Disposable {
 
   private booleanValue(value: unknown, fallback: boolean): boolean {
     return typeof value === 'boolean' ? value : fallback;
-  }
-
-  private getConfigurationTarget(
-    config: vscode.WorkspaceConfiguration,
-    key: 'environments' | 'activeEnvironment'
-  ): vscode.ConfigurationTarget {
-    const inspection = config.inspect(key);
-    if (inspection?.workspaceFolderValue !== undefined) return vscode.ConfigurationTarget.WorkspaceFolder;
-    if (inspection?.workspaceValue !== undefined) return vscode.ConfigurationTarget.Workspace;
-    if (inspection?.globalValue !== undefined) return vscode.ConfigurationTarget.Global;
-    return vscode.ConfigurationTarget.Global;
   }
 
   private async browseLocalDirectory(rawIndex: unknown): Promise<void> {

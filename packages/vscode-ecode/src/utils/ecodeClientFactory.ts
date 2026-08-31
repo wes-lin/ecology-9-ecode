@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { EcodeClient, EcodeLogger } from 'ecode-sdk';
 import { getActiveEcodeEnvironment, getEnvironmentCookieFile } from '../config/ecodeEnvironment';
+import { EcodeSettingsRepository } from '../config/ecodeSettingsRepository';
 
 export function createActiveEcodeClient(
   storageRoot: string,
@@ -22,9 +23,12 @@ export class ActiveEcodeClientProvider {
   private client: EcodeClient | undefined;
   private environmentKey = '';
 
-  constructor(private readonly storageRoot: string) {}
+  constructor(
+    private readonly storageRoot: string,
+    private readonly settings = new EcodeSettingsRepository()
+  ) {}
 
-  get(config: vscode.WorkspaceConfiguration = vscode.workspace.getConfiguration('ecode')): EcodeClient {
+  get(config: vscode.WorkspaceConfiguration = this.settings.configuration): EcodeClient {
     const environment = getActiveEcodeEnvironment(config);
     if (!environment) throw new Error('No eCode environment configured.');
     const environmentKey = JSON.stringify([

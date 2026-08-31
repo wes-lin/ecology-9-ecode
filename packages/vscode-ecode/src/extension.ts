@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { getActiveEcodeEnvironment, getEcodeEnvironments } from './config/ecodeEnvironment';
+import { EcodeSettingsRepository } from './config/ecodeSettingsRepository';
 import { EcodeDevSessionManager, showEcodeDevError } from './dev/ecodeDevSessionManager';
 import { EcodeNode } from './providers/ecodeNode';
 import { EcodeEnvironmentManager } from './providers/environmentManager';
@@ -11,9 +11,10 @@ import { getErrorMessage } from './utils/errors';
 let activeDevSessionManager: EcodeDevSessionManager | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
-  const clientProvider = new ActiveEcodeClientProvider(context.globalStorageUri.fsPath);
-  const treeDataProvider = new EcodeTreeDataProvider(context.globalStorageUri.fsPath, clientProvider);
-  const localTreeDataProvider = new LocalTreeDataProvider(context.globalStorageUri.fsPath, clientProvider);
+  const settings = new EcodeSettingsRepository();
+  const clientProvider = new ActiveEcodeClientProvider(context.globalStorageUri.fsPath, settings);
+  const treeDataProvider = new EcodeTreeDataProvider(context.globalStorageUri.fsPath, clientProvider, settings);
+  const localTreeDataProvider = new LocalTreeDataProvider(context.globalStorageUri.fsPath, clientProvider, settings);
   const remoteTreeView = vscode.window.createTreeView('ecodeExplorer', {
     treeDataProvider,
     showCollapseAll: true,
@@ -23,8 +24,14 @@ export function activate(context: vscode.ExtensionContext): void {
     showCollapseAll: true,
     manageCheckboxStateManually: true,
   });
-  const environmentManager = new EcodeEnvironmentManager(context.extensionUri);
-  const devSessionManager = new EcodeDevSessionManager(context.extensionUri);
+  const updateEnvironmentDescriptions = (): void => {
+    const description = settings.activeEnvironment?.name || 'No environment';
+    localTreeView.description = description;
+    remoteTreeView.description = description;
+  };
+  updateEnvironmentDescriptions();
+  const environmentManager = new EcodeEnvironmentManager(context.extensionUri, settings);
+  const devSessionManager = new EcodeDevSessionManager(context.extensionUri, settings);
   activeDevSessionManager = devSessionManager;
   const refreshLocalTree = (uri?: vscode.Uri): void => {
     localTreeDataProvider.reloadFromTree(uri?.fsPath).catch((error) => {
@@ -71,8 +78,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('ecode.switchEnvironment', async () => {
-      const config = vscode.workspace.getConfiguration('ecode');
-      const environments = getEcodeEnvironments(config);
+      const environments = settings.environments;
       if (environments.length === 0) {
         const action = await vscode.window.showInformationMessage(
           'No eCode environments configured.',
@@ -82,14 +88,11 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      const activeEnvironment = getActiveEcodeEnvironment(config);
       const picked = await vscode.window.showQuickPick(
         environments.map((environment) => ({
           label: environment.name,
           description: environment.baseUrl,
-          detail: `User: ${environment.username || '(empty)'} | Local: ${environment.localDir || './'}`,
           environment,
-          picked: environment.name === activeEnvironment?.name,
         })),
         { placeHolder: 'Select eCode environment' }
       );
@@ -97,7 +100,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
       await localTreeDataProvider.cancelPublishAppsSelection();
       localTreeView.message = undefined;
-      await config.update('activeEnvironment', picked.environment.name, vscode.ConfigurationTarget.Global);
+      await settings.updateActiveEnvironment(picked.environment.name);
+      updateEnvironmentDescriptions();
       await treeDataProvider.refresh();
       await localTreeDataProvider.refresh();
     })
@@ -306,6 +310,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('ecode.environments') || event.affectsConfiguration('ecode.activeEnvironment')) {
+        updateEnvironmentDescriptions();
         treeDataProvider.refresh();
         refreshLocalTree();
       }

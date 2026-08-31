@@ -9,12 +9,8 @@ import {
   type EcodeDevRuntimeOptions,
   type EcodeDevServerAddress,
 } from 'ecode-dev-runtime';
-import { getEcodeDevServer } from '../config/ecodeDevServer';
-import {
-  getActiveEcodeEnvironment,
-  getActiveEcodeEnvironmentRoot,
-  normalizeEnvironmentBaseUrl,
-} from '../config/ecodeEnvironment';
+import { normalizeEnvironmentBaseUrl } from '../config/ecodeEnvironment';
+import { EcodeSettingsRepository } from '../config/ecodeSettingsRepository';
 import { getErrorMessage } from '../utils/errors';
 
 class OutputChannelLogger implements EcodeDevLogger {
@@ -60,13 +56,13 @@ export class EcodeDevSessionManager implements vscode.Disposable {
   private runtime?: EcodeDevRuntime;
   private address?: EcodeDevServerAddress;
   private fileWatchers: vscode.FileSystemWatcher[] = [];
-  private watchDebounceTimer?: NodeJS.Timeout;
-  private readonly pendingSourceFiles = new Set<string>();
-  private metadataChanged = false;
   private operationQueue: Promise<unknown> = Promise.resolve();
   private disposed = false;
 
-  constructor(private readonly extensionUri: vscode.Uri) {
+  constructor(
+    private readonly extensionUri: vscode.Uri,
+    private readonly settings = new EcodeSettingsRepository()
+  ) {
     this.statusBar.command = 'ecode.dev.open';
     void vscode.commands.executeCommand('setContext', 'ecode.dev.running', false);
     void vscode.commands.executeCommand('setContext', 'ecode.dev.busy', false);
@@ -111,7 +107,7 @@ export class EcodeDevSessionManager implements vscode.Disposable {
       vscode.window.showWarningMessage('Local eCode debugging is not running.');
       return;
     }
-    const devServer = getEcodeDevServer(vscode.workspace.getConfiguration('ecode'));
+    const devServer = this.settings.devServer;
     const openPath = devServer.openPath;
     const target = new URL(`/${openPath.replace(/^\/+/, '')}`, `${this.address.url}/`);
     const externalUri = await vscode.env.asExternalUri(vscode.Uri.parse(target.toString()));
@@ -166,7 +162,7 @@ export class EcodeDevSessionManager implements vscode.Disposable {
       this.statusBar.tooltip = `Local eCode debugging proxying ${options.proxyTarget}`;
       this.statusBar.show();
       vscode.window.showInformationMessage(`Local eCode debugging started at ${address.url}.`);
-      if (getEcodeDevServer(vscode.workspace.getConfiguration('ecode')).autoOpen) await this.open();
+      if (this.settings.devServer.autoOpen) await this.open();
     } catch (error) {
       await runtime.dispose();
       throw error;
@@ -186,14 +182,13 @@ export class EcodeDevSessionManager implements vscode.Disposable {
   }
 
   private getRuntimeOptions(): EcodeDevRuntimeOptions {
-    const ecodeConfiguration = vscode.workspace.getConfiguration('ecode');
-    const environment = getActiveEcodeEnvironment(ecodeConfiguration);
+    const environment = this.settings.activeEnvironment;
     if (!environment) throw new Error('No eCode environment configured.');
     if (!environment.baseUrl) throw new Error(`Environment "${environment.name}" is missing baseUrl.`);
-    const devServer = getEcodeDevServer(ecodeConfiguration);
+    const devServer = this.settings.devServer;
     const assetDirectory = path.join(this.extensionUri.fsPath, 'dist', 'runtime-assets', 'ecode');
     return {
-      projectRoot: getActiveEcodeEnvironmentRoot(ecodeConfiguration),
+      projectRoot: this.settings.activeEnvironmentRoot,
       proxyTarget: normalizeEnvironmentBaseUrl(environment.baseUrl),
       host: devServer.host,
       port: devServer.port,
@@ -210,14 +205,8 @@ export class EcodeDevSessionManager implements vscode.Disposable {
     const metadataWatcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(projectRoot, '.ecode/{ecode-tree.json,apps/*.json}')
     );
-    const scheduleSource = (uri: vscode.Uri): void => {
-      this.pendingSourceFiles.add(uri.fsPath);
-      this.scheduleWatchFlush();
-    };
-    const scheduleMetadata = (): void => {
-      this.metadataChanged = true;
-      this.scheduleWatchFlush();
-    };
+    const scheduleSource = (uri: vscode.Uri): void => this.runtime?.notifyFileChange(uri.fsPath);
+    const scheduleMetadata = (): void => this.runtime?.notifyConfigurationChange();
     sourceWatcher.onDidCreate(scheduleSource);
     sourceWatcher.onDidChange(scheduleSource);
     sourceWatcher.onDidDelete(scheduleSource);
@@ -229,35 +218,7 @@ export class EcodeDevSessionManager implements vscode.Disposable {
   }
 
   private stopFileWatching(): void {
-    if (this.watchDebounceTimer) clearTimeout(this.watchDebounceTimer);
-    this.watchDebounceTimer = undefined;
-    this.pendingSourceFiles.clear();
-    this.metadataChanged = false;
     this.fileWatchers.splice(0).forEach((watcher) => watcher.dispose());
-  }
-
-  private scheduleWatchFlush(): void {
-    if (this.watchDebounceTimer) clearTimeout(this.watchDebounceTimer);
-    this.watchDebounceTimer = setTimeout(() => {
-      this.watchDebounceTimer = undefined;
-      void this.flushWatchChanges();
-    }, 80);
-  }
-
-  private async flushWatchChanges(): Promise<void> {
-    const runtime = this.runtime;
-    if (!runtime) return;
-    const metadataChanged = this.metadataChanged;
-    const files = [...this.pendingSourceFiles];
-    this.metadataChanged = false;
-    this.pendingSourceFiles.clear();
-    try {
-      if (metadataChanged) await runtime.reloadConfiguration();
-      else await runtime.rebuildFiles(files);
-    } catch (error) {
-      this.logger.error('Automatic local eCode rebuild failed.', error);
-      this.output.show(true);
-    }
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {

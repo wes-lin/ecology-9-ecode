@@ -18,6 +18,7 @@ export class EcodeDevRuntime {
   private watchers: FSWatcher[] = [];
   private debounceTimer?: NodeJS.Timeout;
   private pendingFiles = new Set<string>();
+  private configurationChanged = false;
   private buildQueue: Promise<unknown> = Promise.resolve();
 
   constructor(options: EcodeDevRuntimeOptions) {
@@ -44,6 +45,36 @@ export class EcodeDevRuntime {
 
   reloadConfiguration(): Promise<EcodeDevBuildResult> {
     return this.enqueue(() => this.builder.reloadConfiguration());
+  }
+
+  notifyFileChange(filePath: string): void {
+    const resolvedPath = path.resolve(filePath);
+    if (
+      path.basename(resolvedPath) === 'ecode-tree.json' ||
+      resolvedPath.includes(`${path.sep}.ecode${path.sep}apps${path.sep}`)
+    ) {
+      this.configurationChanged = true;
+    } else {
+      this.pendingFiles.add(resolvedPath);
+    }
+    this.scheduleChanges();
+  }
+
+  notifyConfigurationChange(): void {
+    this.configurationChanged = true;
+    this.scheduleChanges();
+  }
+
+  flushChanges(): Promise<EcodeDevBuildResult | undefined> {
+    if (this.debounceTimer) clearTimeout(this.debounceTimer);
+    this.debounceTimer = undefined;
+    const files = [...this.pendingFiles];
+    const configurationChanged = this.configurationChanged;
+    this.pendingFiles.clear();
+    this.configurationChanged = false;
+    if (configurationChanged) return this.reloadConfiguration();
+    if (files.length > 0) return this.rebuildFiles(files);
+    return Promise.resolve(undefined);
   }
 
   async startProxy(): Promise<EcodeDevServerAddress> {
@@ -77,8 +108,7 @@ export class EcodeDevRuntime {
     for (const root of roots) {
       if (!existsSync(root)) continue;
       const watcher = watch(root, { recursive: true }, (_eventType, fileName) => {
-        this.pendingFiles.add(fileName ? path.join(root, fileName.toString()) : root);
-        this.scheduleChanges();
+        this.notifyFileChange(fileName ? path.join(root, fileName.toString()) : root);
       });
       watcher.on('error', (error) => this.logger.error(`eCode watcher failed for ${root}.`, error));
       this.watchers.push(watcher);
@@ -90,6 +120,7 @@ export class EcodeDevRuntime {
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     this.debounceTimer = undefined;
     this.pendingFiles.clear();
+    this.configurationChanged = false;
     this.watchers.splice(0).forEach((watcher) => watcher.close());
     this.logger.info('eCode source watcher stopped.');
   }
@@ -122,13 +153,7 @@ export class EcodeDevRuntime {
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = undefined;
-      const files = [...this.pendingFiles];
-      this.pendingFiles.clear();
-      const metadataChanged = files.some(
-        (filePath) => path.basename(filePath) === 'ecode-tree.json' || filePath.includes(`${path.sep}apps${path.sep}`)
-      );
-      const operation = metadataChanged ? this.reloadConfiguration() : this.rebuildFiles(files);
-      operation.catch((error) => this.logger.error('Automatic eCode rebuild failed.', error));
+      void this.flushChanges().catch((error) => this.logger.error('Automatic eCode rebuild failed.', error));
     }, this.options.watchDebounceMs ?? 80);
   }
 }

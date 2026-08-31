@@ -4,4 +4,5 @@
 !LICENSE
 !assets/**
 !dist/extension.js
+!dist/webviews/**
 !dist/runtime-assets/**
