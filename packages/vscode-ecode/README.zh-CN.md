@@ -21,8 +21,6 @@
 - 可以访问 eCode API 的 Weaver Ecology 9 服务器
 - 用于下载或维护 eCode 源码的本地工作区
 
-插件安装包已经包含运行时依赖和基础脚本。eCode 业务项目不需要自行配置 Gulp、BrowserSync、Babel、`ecode-sdk.js` 或 `wea.js`。
-
 ## 环境与设置
 
 点击任意视图标题栏中的齿轮按钮，或执行 `eCode: Settings`，可以打开可视化设置页面。
