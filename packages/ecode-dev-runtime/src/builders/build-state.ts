@@ -117,15 +117,47 @@ export class EcodeBuildStateStore {
     return changedFiles;
   }
 
-  async updateSources(state: EcodeBuildState, filePaths: string[]): Promise<void> {
+  async captureChangedSources(
+    state: EcodeBuildState,
+    filePaths: string[]
+  ): Promise<{ filePaths: string[]; snapshot: FileSnapshot }> {
+    const changedFiles: string[] = [];
+    const snapshot: FileSnapshot = {};
+    for (const filePath of filePaths) {
+      if (!this.isSourceFile(filePath)) {
+        changedFiles.push(filePath);
+        continue;
+      }
+      const relativePath = toPosixPath(path.relative(this.projectRoot, filePath));
+      const previous = state.sources[normalizePathKey(relativePath)];
+      const signature = await this.readSignature(filePath);
+      if (previous?.signature === signature && previous.path === relativePath) continue;
+      if (!previous && signature === undefined) continue;
+      changedFiles.push(filePath);
+      if (signature !== undefined) snapshot[normalizePathKey(relativePath)] = { path: relativePath, signature };
+    }
+    return { filePaths: changedFiles, snapshot };
+  }
+
+  async updateSources(state: EcodeBuildState, filePaths: string[], snapshot?: FileSnapshot): Promise<void> {
     for (const filePath of filePaths) {
       if (!this.isSourceFile(filePath)) continue;
       const relativePath = toPosixPath(path.relative(this.projectRoot, filePath));
       const key = normalizePathKey(relativePath);
+      if (snapshot) {
+        const current = snapshot[key];
+        if (current) state.sources[key] = current;
+        else delete state.sources[key];
+        continue;
+      }
       const signature = await this.readSignature(filePath);
       if (signature === undefined) delete state.sources[key];
       else state.sources[key] = { path: relativePath, signature };
     }
+  }
+
+  async updateOutputs(state: EcodeBuildState): Promise<void> {
+    state.outputs = await this.captureOutputs();
   }
 
   async save(state: EcodeBuildState): Promise<void> {

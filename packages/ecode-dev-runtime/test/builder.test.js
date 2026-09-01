@@ -426,6 +426,57 @@ describe('EcodeProjectBuilder', () => {
     }
   });
 
+  it('persists watched source changes immediately after the incremental build', async () => {
+    const project = createProject();
+    try {
+      const options = { projectRoot: project.root, preStateBaseJavaScriptFiles: [] };
+      const builder = new EcodeProjectBuilder(options);
+      await builder.build();
+      const cssPath = write(
+        project.root,
+        `src/${project.appPath}/style.css`,
+        '.sample { color: rebeccapurple; padding: 4px; }'
+      );
+      await builder.rebuildFile(cssPath);
+
+      const result = await new EcodeProjectBuilder(options).prepare();
+
+      assert.deepEqual(result.builtAppIds, []);
+      assert.match(
+        fs.readFileSync(path.join(project.root, 'dist', 'release', project.appId, 'index.css'), 'utf8'),
+        /rebeccapurple/
+      );
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores duplicate watcher events when the source signature is unchanged', async () => {
+    const project = createProject();
+    try {
+      const messages = [];
+      const builder = new EcodeProjectBuilder({
+        projectRoot: project.root,
+        preStateBaseJavaScriptFiles: [],
+        logger: {
+          debug: (message) => messages.push(message),
+          info: () => {},
+          warn: () => {},
+          error: () => {},
+        },
+      });
+      await builder.build();
+      const sourcePath = path.join(project.root, `src/${project.appPath}/provider.js`);
+
+      const result = await builder.rebuildFile(sourcePath);
+
+      assert.deepEqual(result.builtAppIds, []);
+      assert.ok(messages.some((message) => message.includes('Ignored 1 unchanged file event')));
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
   it('detects source files added and deleted between sessions', async () => {
     const project = createProject();
     try {

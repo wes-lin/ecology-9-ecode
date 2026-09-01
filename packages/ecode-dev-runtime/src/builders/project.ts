@@ -6,7 +6,7 @@ import { isPathInside, normalizePathKey, normalizeRelativePath, resolveInside, t
 import { NOOP_DEV_LOGGER, type EcodeDevBuildOptions, type EcodeDevBuildResult, type EcodeDevLogger } from '../types';
 import { buildAppCss } from './app-css';
 import { buildAppJavaScript } from './app-javascript';
-import { EcodeBuildStateStore, type EcodeBuildState } from './build-state';
+import { EcodeBuildStateStore, type EcodeBuildState, type FileSnapshot } from './build-state';
 import { EcodePreStateBuilder } from './prestate';
 import { copyAppResources, rebuildResource } from './resource';
 
@@ -173,7 +173,7 @@ export class EcodeProjectBuilder {
 
     this.logger.info(`Found ${changedFiles.length} source change(s) since the previous eCode build.`);
     const result = await this.rebuildFiles(changedFiles);
-    await this.recreateBuildState();
+    await this.flushBuildState();
     result.durationMs = elapsedSince(startedAt);
     this.logger.info(`eCode startup build preparation completed in ${result.durationMs}ms.`);
     return result;
@@ -193,9 +193,21 @@ export class EcodeProjectBuilder {
       }
       changedFiles.set(normalizePathKey(absolutePath), absolutePath);
     }
-    const absolutePaths = [...changedFiles.values()];
+    let absolutePaths = [...changedFiles.values()];
+    let changedSourceSnapshot: FileSnapshot | undefined;
     if (absolutePaths.some((absolutePath) => isPathInside(path.join(this.projectRoot, '.ecode'), absolutePath))) {
       return this.build();
+    }
+    if (this.cachedBuildState) {
+      const reportedPathCount = absolutePaths.length;
+      const changedSources = await this.buildStateStore.captureChangedSources(this.cachedBuildState, absolutePaths);
+      absolutePaths = changedSources.filePaths;
+      changedSourceSnapshot = changedSources.snapshot;
+      const ignoredPathCount = reportedPathCount - absolutePaths.length;
+      if (ignoredPathCount > 0) this.logger.debug(`Ignored ${ignoredPathCount} unchanged file event(s).`);
+      if (absolutePaths.length === 0) {
+        return { builtAppIds: [], outputDirectory: this.outputDirectory, durationMs: elapsedSince(startedAt) };
+      }
     }
 
     const apps = this.loadReleasedApps();
@@ -275,7 +287,7 @@ export class EcodeProjectBuilder {
       tasks.push(this.preStateBuilder.buildCss(apps, [...preStateCssFiles.values()]));
     }
     await Promise.all(tasks);
-    await this.updateBuildStateSources(absolutePaths);
+    await this.persistBuildStateUpdates(absolutePaths, changedSourceSnapshot);
 
     const result = {
       builtAppIds: [...builtAppIds],
@@ -343,12 +355,19 @@ export class EcodeProjectBuilder {
     }
   }
 
-  private async updateBuildStateSources(filePaths: string[]): Promise<void> {
+  private async persistBuildStateUpdates(filePaths: string[], sourceSnapshot?: FileSnapshot): Promise<void> {
     if (!this.cachedBuildState) return;
-    await this.buildStateStore.updateSources(this.cachedBuildState, filePaths);
-    const preState = this.preStateBuilder.createCache();
-    if (preState) this.cachedBuildState.preState = preState;
-    this.buildStateDirty = true;
+    try {
+      await this.buildStateStore.updateSources(this.cachedBuildState, filePaths, sourceSnapshot);
+      await this.buildStateStore.updateOutputs(this.cachedBuildState);
+      const preState = this.preStateBuilder.createCache();
+      if (preState) this.cachedBuildState.preState = preState;
+      await this.buildStateStore.save(this.cachedBuildState);
+      this.buildStateDirty = false;
+    } catch (error) {
+      this.buildStateDirty = true;
+      this.logger.warn('Unable to persist incremental eCode build state.', error);
+    }
   }
 
   private async readTree(): Promise<EcodeTreeNode[]> {
