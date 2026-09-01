@@ -49,3 +49,23 @@ test('configuration changes supersede pending source rebuilds', async (t) => {
   assert.equal(rebuildCount, 0);
   await runtime.dispose();
 });
+
+test('ignores temporary files reported by the external watcher', async (t) => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ecode-runtime-'));
+  t.after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+
+  const runtime = new EcodeDevRuntime({ projectRoot, watchDebounceMs: 60_000 });
+  const rebuilt = [];
+  runtime.builder.rebuildFiles = async (files) => {
+    rebuilt.push(files);
+    return { builtAppIds: [], durationMs: 0 };
+  };
+
+  runtime.notifyFileChange(path.join(projectRoot, 'src', 'app', 'index.js.git'));
+  runtime.notifyFileChange(path.join(projectRoot, 'src', 'app', 'index.js'));
+  await runtime.flushChanges();
+
+  assert.equal(rebuilt.length, 1);
+  assert.deepEqual(rebuilt[0].map((file) => path.basename(file)), ['index.js']);
+  await runtime.dispose();
+});

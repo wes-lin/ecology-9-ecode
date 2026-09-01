@@ -10,6 +10,26 @@ import {
   type EcodeDevLogger,
 } from './types';
 
+function isTemporaryFile(filePath: string): boolean {
+  const segments = path.normalize(filePath).split(path.sep);
+  if (segments.some((segment) => segment.toLowerCase() === '.git')) return true;
+
+  const name = path.basename(filePath).toLowerCase();
+  return (
+    name.endsWith('.git') ||
+    name.endsWith('.tmp') ||
+    name.endsWith('.temp') ||
+    name.endsWith('.swp') ||
+    name.endsWith('.swo') ||
+    name.endsWith('.bak') ||
+    name.endsWith('.orig') ||
+    name.endsWith('.rej') ||
+    name.endsWith('~') ||
+    /^\.#[^/\\]+$/.test(name) ||
+    /^#[^/\\]+#$/.test(name)
+  );
+}
+
 export class EcodeDevRuntime {
   readonly builder: EcodeProjectBuilder;
   private readonly options: EcodeDevRuntimeOptions;
@@ -49,6 +69,10 @@ export class EcodeDevRuntime {
 
   notifyFileChange(filePath: string): void {
     const resolvedPath = path.resolve(filePath);
+    if (isTemporaryFile(resolvedPath)) {
+      this.logger.debug(`Ignored temporary file ${resolvedPath}.`);
+      return;
+    }
     if (
       path.basename(resolvedPath) === 'ecode-tree.json' ||
       resolvedPath.includes(`${path.sep}.ecode${path.sep}apps${path.sep}`)
