@@ -32,10 +32,12 @@ export class EcodeFileSystemProvider implements vscode.FileSystemProvider {
     // 文件内容缓存中有记录 → 文件
     const content = this.tree.getRemoteFileContent(uri);
     if (content !== undefined) {
+      const timestamps = this.tree.getRemoteFileTimestamps(uri);
+      const fallbackTime = Date.now();
       return {
         type: vscode.FileType.File,
-        ctime: Date.now(),
-        mtime: Date.now(),
+        ctime: timestamps?.ctime ?? fallbackTime,
+        mtime: timestamps?.mtime ?? fallbackTime,
         size: content.byteLength,
         permissions: this.tree.isRemoteFileWritable(uri) ? undefined : vscode.FilePermission.Readonly,
       };

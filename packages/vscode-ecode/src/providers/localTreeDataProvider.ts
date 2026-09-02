@@ -76,7 +76,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
       contextValue: this._getContextValue(element),
       fileCommand: {
         command: 'ecode.local.openFile',
-        title: 'Open Local File',
+        title: 'Open',
         arguments: [element],
       },
     };

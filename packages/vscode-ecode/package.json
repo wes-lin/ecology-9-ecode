@@ -3,7 +3,7 @@
   "displayName": "Weaver Ecology eCode",
   "description": "Develop, debug, synchronize, and publish Weaver Ecology 9 eCode apps in VS Code",
   "icon": "assets/ecode.png",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "ecode-dev-assistant",
   "repository": {
     "url": "https://github.com/wes-lin/ecology-9-ecode/tree/main/packages/vscode-ecode"
@@ -216,11 +216,6 @@
         "enablement": "!ecodeExplorer.busy && !ecodeLocalExplorer.publishSelection"
       },
       {
-        "command": "ecode.viewFile",
-        "title": "View Remote File",
-        "enablement": "!ecodeExplorer.busy"
-      },
-      {
         "command": "ecode.release",
         "title": "Release",
         "enablement": "!ecodeExplorer.busy"
@@ -289,12 +284,6 @@
         "command": "ecode.local.refresh",
         "title": "Refresh Local Tree",
         "icon": "$(refresh)",
-        "category": "eCode",
-        "enablement": "!ecodeLocalExplorer.publishSelection"
-      },
-      {
-        "command": "ecode.local.openFile",
-        "title": "Open Local File",
         "category": "eCode",
         "enablement": "!ecodeLocalExplorer.publishSelection"
       },
@@ -494,11 +483,6 @@
           "group": "navigation@0"
         },
         {
-          "command": "ecode.viewFile",
-          "when": "view == ecodeExplorer && viewItem =~ /canViewRemote/",
-          "group": "inline@0"
-        },
-        {
           "command": "ecode.showAppId",
           "when": "view == ecodeExplorer && viewItem =~ /canShowAppId/",
           "group": "navigation@1"
@@ -577,11 +561,6 @@
           "command": "ecode.deleteItem",
           "when": "view == ecodeExplorer && viewItem =~ /canDelete/",
           "group": "modify@1"
-        },
-        {
-          "command": "ecode.local.openFile",
-          "when": "view == ecodeLocalExplorer && viewItem =~ /localFile/",
-          "group": "inline@0"
         },
         {
           "command": "ecode.showAppId",
