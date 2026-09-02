@@ -6,7 +6,7 @@ import { EcodeNode } from './ecodeNode';
 import { EcodeFileSystemProvider } from './fileSystemProvider';
 import { getErrorMessage } from '../utils/errors';
 import { ActiveEcodeClientProvider } from '../utils/ecodeClientFactory';
-import { getSafeRelativeTreePath, resolveTreePath } from '../utils/pathUtils';
+import { getSafeRelativeTreePath, normalizeTreePath, resolveTreePath } from '../utils/pathUtils';
 import {
   getActiveEcodeEnvironment,
   getActiveEcodeEnvironmentRoot,
@@ -90,7 +90,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
       tooltip: element.remotePath,
       fileCommand: {
         command: 'ecode.viewFile',
-        title: 'View Remote File',
+        title: 'Open',
         arguments: [element],
       },
     };
@@ -228,6 +228,10 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     return this._documents.getContent(uri);
   }
 
+  getRemoteFileTimestamps(uri: vscode.Uri): { ctime: number; mtime: number } | undefined {
+    return this._documents.getTimestamps(uri);
+  }
+
   isRemoteFileWritable(uri: vscode.Uri): boolean {
     return this._documents.isWritable(uri);
   }
@@ -256,7 +260,11 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
       if (element.type !== 'file') throw new Error('Select a local file.');
       const targetPath = this._getLocalPath(element);
       if (!fs.existsSync(targetPath)) throw new Error(`Local file does not exist: ${targetPath}`);
-      const remoteContent = await this._readRemoteContent(element);
+      const remoteElement = await this._findRemoteElementByPath(element.remotePath);
+      if (!remoteElement || remoteElement.type !== 'file') {
+        throw new Error(`Remote file does not exist in the active environment: ${element.remotePath}`);
+      }
+      const remoteContent = await this._readRemoteContent(remoteElement);
       const safePath = `/${this._getSafeRelativeRemotePath(element.remotePath).replace(/\\/g, '/')}`;
       const remoteUri = vscode.Uri.from({
         scheme: 'ecode',
@@ -265,8 +273,13 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
       });
       const localUri = vscode.Uri.file(targetPath);
 
-      this._documents.open(remoteUri, remoteContent);
-      await vscode.commands.executeCommand('vscode.diff', remoteUri, localUri, `${element.label}: Remote ↔ Local`);
+      this._documents.open(
+        remoteUri,
+        remoteContent,
+        this._isRemoteFileEditable(remoteElement) ? remoteElement : undefined
+      );
+      await vscode.workspace.openTextDocument(remoteUri);
+      await vscode.commands.executeCommand('vscode.diff', localUri, remoteUri, `${element.label}: Local → Remote`);
     } catch (error) {
       vscode.window.showErrorMessage(`Compare failed: ${getErrorMessage(error)}`);
     }
@@ -609,6 +622,25 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
         ? await client.listTree(element.id ?? '', '')
         : await client.listTree('', element.id ?? '');
     return this._mapTreeItems(tree, element.remotePath, element);
+  }
+
+  async _findRemoteElementByPath(remotePath: string): Promise<EcodeNode | undefined> {
+    const segments = normalizeTreePath(remotePath).split('/').filter(Boolean);
+    let children = await this._listRemoteChildren();
+    let current: EcodeNode | undefined;
+
+    for (const [index, segment] of segments.entries()) {
+      current =
+        children.find((child) => child.label === segment) ||
+        children.find((child) => child.label.toLowerCase() === segment.toLowerCase());
+      if (!current) return undefined;
+      if (index < segments.length - 1) {
+        if (current.type !== 'folder') return undefined;
+        children = current.children || (await this._listRemoteChildren(current));
+      }
+    }
+
+    return current;
   }
 
   async _readRemoteContent(element: EcodeNode): Promise<string | Buffer> {
