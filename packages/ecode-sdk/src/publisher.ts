@@ -80,6 +80,9 @@ export async function publishAppUpgradePackage(
     throw new Error('Published app preload order cannot be restored: client.setPreStateOrder is unavailable.');
   }
   for (const app of appsWithPreStateOrder) {
+    if (app.appPreStateOrder === 10000) {
+      continue;
+    }
     await client.setPreStateOrder!(app.appId, app.appPreStateOrder!);
   }
 
