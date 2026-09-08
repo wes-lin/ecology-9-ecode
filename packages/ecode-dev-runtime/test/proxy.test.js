@@ -22,6 +22,85 @@ function closeServer(server) {
 }
 
 describe('EcodeDevProxyServer', () => {
+  it('isolates upstream connections and removes hop-by-hop headers', async () => {
+    const sockets = new Set();
+    const upstream = http.createServer((request, response) => {
+      sockets.add(request.socket);
+      assert.equal(request.headers.connection, 'close');
+      assert.equal(request.headers['x-private-hop'], undefined);
+      response.writeHead(200, { connection: 'close, x-upstream-hop', 'x-upstream-hop': 'private' });
+      response.end('ok');
+    });
+    const bound = await listen(upstream);
+    const proxy = new EcodeDevProxyServer({
+      projectRoot: os.tmpdir(),
+      target: `http://127.0.0.1:${bound.port}`,
+      port: 0,
+    });
+    try {
+      const address = await proxy.start();
+      for (let index = 0; index < 2; index += 1) {
+        await new Promise((resolve, reject) => {
+          const request = http.get(
+            address.url,
+            { headers: { connection: 'keep-alive, x-private-hop', 'x-private-hop': 'private' } },
+            (response) => {
+              assert.equal(response.statusCode, 200);
+              assert.equal(response.headers['x-upstream-hop'], undefined);
+              response.resume();
+              response.once('end', resolve);
+              response.once('error', reject);
+            }
+          );
+          request.once('error', reject);
+        });
+      }
+      assert.equal(sockets.size, 2);
+    } finally {
+      await proxy.stop();
+      await closeServer(upstream);
+    }
+  });
+
+  it('reports invalid upstream HTTP responses without replaying a POST or leaking query data', async () => {
+    let requests = 0;
+    const errors = [];
+    const upstream = net.createServer((socket) => {
+      socket.once('data', () => {
+        requests += 1;
+        socket.end('INVALID RESPONSE\r\n');
+      });
+    });
+    const bound = await listen(upstream);
+    const proxy = new EcodeDevProxyServer({
+      projectRoot: os.tmpdir(),
+      target: `http://127.0.0.1:${bound.port}`,
+      port: 0,
+      logger: {
+        debug() {},
+        info() {},
+        warn() {},
+        error(message, data) {
+          errors.push({ message, data });
+        },
+      },
+    });
+    try {
+      const address = await proxy.start();
+      const response = await fetch(`${address.url}/api/save?token=private`, { method: 'POST', body: 'payload' });
+      assert.equal(response.status, 502);
+      assert.equal(await response.text(), 'Bad Gateway');
+      assert.equal(requests, 1);
+      assert.equal(errors[0].data.code, 'HPE_INVALID_CONSTANT');
+      assert.equal(errors[0].data.path, '/api/save');
+      assert.match(errors[0].data.hint, /HTTP\/HTTPS/);
+      assert.doesNotMatch(JSON.stringify(errors), /private|payload|rawPacket/);
+    } finally {
+      await proxy.stop();
+      await closeServer(upstream);
+    }
+  });
+
   it('serves cloudstore files locally and proxies other requests', async () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ecode-dev-proxy-'));
     const localFile = path.join(projectRoot, 'dist', 'release', 'app-id', 'index.js');

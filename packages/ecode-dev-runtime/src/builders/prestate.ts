@@ -14,6 +14,7 @@ type PreStateBuilderOptions = {
   sourceDirectory: string;
   outputDirectory: string;
   baseJavaScriptFiles: string[];
+  signal?: AbortSignal;
 };
 
 export type EcodePreStateCache = {
@@ -26,6 +27,7 @@ export class EcodePreStateBuilder {
   private readonly sourceDirectory: string;
   private readonly outputDirectory: string;
   private readonly baseJavaScriptFiles: string[];
+  private readonly signal?: AbortSignal;
   private cachedJavaScriptFiles?: PreStateFile[];
   private cachedCssFiles?: PreStateFile[];
   private cachedBaseJavaScript?: string;
@@ -38,6 +40,7 @@ export class EcodePreStateBuilder {
     this.sourceDirectory = options.sourceDirectory;
     this.outputDirectory = options.outputDirectory;
     this.baseJavaScriptFiles = options.baseJavaScriptFiles;
+    this.signal = options.signal;
   }
 
   reset(): void {
@@ -76,17 +79,18 @@ export class EcodePreStateBuilder {
   }
 
   async buildJavaScript(apps: EcodeAppConfig[], changedFilePaths?: string[]): Promise<void> {
+    this.signal?.throwIfAborted();
     const devOutput = path.join(this.outputDirectory, 'dev');
     await fs.mkdir(devOutput, { recursive: true });
     const files = this.getJavaScriptFiles(apps);
 
     if (!changedFilePaths || !this.javaScriptCacheInitialized) {
       this.javaScriptParts.clear();
-      await Promise.all(files.map((file) => this.updateJavaScriptPart(file)));
+      await this.updateParts(files, (file) => this.updateJavaScriptPart(file));
       this.javaScriptCacheInitialized = true;
     } else {
       const changedFiles = this.findFiles(files, changedFilePaths);
-      await Promise.all(changedFiles.map((file) => this.updateJavaScriptPart(file)));
+      await this.updateParts(changedFiles, (file) => this.updateJavaScriptPart(file));
     }
 
     const parts = this.collectParts(files, this.javaScriptParts);
@@ -99,23 +103,45 @@ export class EcodePreStateBuilder {
   }
 
   async buildCss(apps: EcodeAppConfig[], changedFilePaths?: string[]): Promise<void> {
+    this.signal?.throwIfAborted();
     const devOutput = path.join(this.outputDirectory, 'dev');
     await fs.mkdir(devOutput, { recursive: true });
     const files = this.getCssFiles(apps);
 
     if (!changedFilePaths || !this.cssCacheInitialized) {
       this.cssParts.clear();
-      await Promise.all(files.map((file) => this.updateCssPart(file)));
+      await this.updateParts(files, (file) => this.updateCssPart(file));
       this.cssCacheInitialized = true;
     } else {
       const changedFiles = this.findFiles(files, changedFilePaths);
-      await Promise.all(changedFiles.map((file) => this.updateCssPart(file)));
+      await this.updateParts(changedFiles, (file) => this.updateCssPart(file));
     }
 
     const parts = this.collectParts(files, this.cssParts);
     const outputPath = path.join(devOutput, 'init.css');
     if (parts.length > 0) await fs.writeFile(outputPath, parts.join(''), 'utf8');
     else await fs.rm(outputPath, { force: true });
+  }
+
+  private async updateParts(files: PreStateFile[], update: (file: PreStateFile) => Promise<void>): Promise<void> {
+    let next = 0;
+    let failed = false;
+    const results = await Promise.allSettled(
+      Array.from({ length: Math.min(4, files.length) }, async () => {
+        while (!failed && next < files.length) {
+          this.signal?.throwIfAborted();
+          try {
+            await update(files[next++]);
+          } catch (error) {
+            failed = true;
+            throw error;
+          }
+        }
+      })
+    );
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+    this.signal?.throwIfAborted();
   }
 
   private getJavaScriptFiles(apps: EcodeAppConfig[]): PreStateFile[] {
@@ -188,6 +214,7 @@ export class EcodePreStateBuilder {
 
   private async updateJavaScriptPart(file: PreStateFile): Promise<void> {
     const source = await this.readOptionalFile(file.sourcePath);
+    this.signal?.throwIfAborted();
     const cacheKey = normalizePathKey(file.sourcePath);
     if (source === undefined) {
       this.javaScriptParts.delete(cacheKey);
@@ -199,6 +226,7 @@ export class EcodePreStateBuilder {
 
   private async updateCssPart(file: PreStateFile): Promise<void> {
     const source = await this.readOptionalFile(file.sourcePath);
+    this.signal?.throwIfAborted();
     const cacheKey = normalizePathKey(file.sourcePath);
     if (source === undefined) this.cssParts.delete(cacheKey);
     else this.cssParts.set(cacheKey, appendSourceComment(source, file.commentPath));

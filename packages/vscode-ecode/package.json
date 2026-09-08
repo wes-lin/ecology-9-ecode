@@ -3,7 +3,7 @@
   "displayName": "Weaver Ecology eCode",
   "description": "Develop, debug, synchronize, and publish Weaver Ecology 9 eCode apps in VS Code",
   "icon": "assets/ecode.png",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "ecode-dev-assistant",
   "repository": {
     "url": "https://github.com/wes-lin/ecology-9-ecode/tree/main/packages/vscode-ecode"
@@ -384,7 +384,7 @@
         "title": "Stop Local Debugging",
         "category": "eCode",
         "icon": "$(debug-stop)",
-        "enablement": "ecode.dev.running && !ecode.dev.busy"
+        "enablement": "ecode.dev.running || ecode.dev.starting"
       },
       {
         "command": "ecode.dev.restart",
@@ -452,7 +452,7 @@
         },
         {
           "command": "ecode.dev.stop",
-          "when": "view == ecodeLocalExplorer && ecode.dev.running && !ecode.dev.busy",
+          "when": "view == ecodeLocalExplorer && (ecode.dev.running || ecode.dev.starting)",
           "group": "navigation@6"
         },
         {
@@ -652,7 +652,7 @@
     "vscode:prepublish": "pnpm run build:production",
     "package": "pnpm run build:production && node scripts/ensure-releases-dir.js && vsce package --no-dependencies --out releases",
     "lint": "echo 'Run lint from root'",
-    "test": "echo 'No tests yet'"
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "ecode-dev-runtime": "workspace:*",

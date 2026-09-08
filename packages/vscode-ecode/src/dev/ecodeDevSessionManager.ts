@@ -12,6 +12,7 @@ import {
 import { normalizeEnvironmentBaseUrl } from '../config/ecodeEnvironment';
 import { EcodeSettingsRepository } from '../config/ecodeSettingsRepository';
 import { getErrorMessage } from '../utils/errors';
+import { formatLogTimestamp } from '../utils/logTimestamp';
 
 class OutputChannelLogger implements EcodeDevLogger {
   constructor(private readonly output: vscode.OutputChannel) {}
@@ -34,7 +35,7 @@ class OutputChannelLogger implements EcodeDevLogger {
 
   private write(level: string, message: string, data?: unknown): void {
     const detail = this.formatData(data);
-    this.output.appendLine(`${new Date().toISOString()} [${level}] ${message}${detail ? `\n${detail}` : ''}`);
+    this.output.appendLine(`${formatLogTimestamp()} [${level}] ${message}${detail ? `\n${detail}` : ''}`);
   }
 
   private formatData(data: unknown): string {
@@ -58,6 +59,7 @@ export class EcodeDevSessionManager implements vscode.Disposable {
   private fileWatchers: vscode.FileSystemWatcher[] = [];
   private operationQueue: Promise<unknown> = Promise.resolve();
   private disposed = false;
+  private sessionRevision = 0;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -66,24 +68,30 @@ export class EcodeDevSessionManager implements vscode.Disposable {
     this.statusBar.command = 'ecode.dev.open';
     void vscode.commands.executeCommand('setContext', 'ecode.dev.running', false);
     void vscode.commands.executeCommand('setContext', 'ecode.dev.busy', false);
+    void vscode.commands.executeCommand('setContext', 'ecode.dev.starting', false);
   }
 
   start(): Promise<void> {
-    return this.enqueue(() => this.startInternal());
+    const revision = this.sessionRevision;
+    return this.enqueue(() => this.startInternal(revision));
   }
 
   stop(): Promise<void> {
+    this.cancelSession();
     return this.enqueue(() => this.stopInternal(true));
   }
 
   restart(): Promise<void> {
+    this.cancelSession();
+    const revision = this.sessionRevision;
     return this.enqueue(async () => {
       await this.stopInternal(false);
-      await this.startInternal();
+      await this.startInternal(revision);
     });
   }
 
   shutdown(): Promise<void> {
+    this.cancelSession();
     return this.enqueue(() => this.stopInternal(false));
   }
 
@@ -139,7 +147,8 @@ export class EcodeDevSessionManager implements vscode.Disposable {
     });
   }
 
-  private async startInternal(): Promise<void> {
+  private async startInternal(revision: number): Promise<void> {
+    if (this.disposed || revision !== this.sessionRevision) return;
     if (this.runtime && this.address) {
       vscode.window.showInformationMessage(`Local eCode debugging is already running at ${this.address.url}.`);
       return;
@@ -151,10 +160,15 @@ export class EcodeDevSessionManager implements vscode.Disposable {
     this.output.show(true);
     const options = this.getRuntimeOptions();
     const runtime = createEcodeDevRuntime(options);
+    this.runtime = runtime;
     try {
+      await vscode.commands.executeCommand('setContext', 'ecode.dev.starting', true);
       await runtime.prepare();
       const address = await runtime.startProxy();
-      this.runtime = runtime;
+      if (this.disposed || revision !== this.sessionRevision) {
+        await runtime.dispose();
+        return;
+      }
       this.address = address;
       this.startFileWatching(options.projectRoot);
       await vscode.commands.executeCommand('setContext', 'ecode.dev.running', true);
@@ -165,8 +179,18 @@ export class EcodeDevSessionManager implements vscode.Disposable {
       if (this.settings.devServer.autoOpen) await this.open();
     } catch (error) {
       await runtime.dispose();
+      if (this.runtime === runtime) this.runtime = undefined;
+      if (revision !== this.sessionRevision) return;
       throw error;
+    } finally {
+      await vscode.commands.executeCommand('setContext', 'ecode.dev.starting', false);
     }
+  }
+
+  private cancelSession(): void {
+    this.sessionRevision += 1;
+    this.stopFileWatching();
+    this.runtime?.cancel();
   }
 
   private async stopInternal(notify: boolean): Promise<void> {
@@ -229,6 +253,7 @@ export class EcodeDevSessionManager implements vscode.Disposable {
         try {
           return await operation();
         } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') return undefined as T;
           this.logger.error('eCode development operation failed.', error);
           this.output.show(true);
           throw error;

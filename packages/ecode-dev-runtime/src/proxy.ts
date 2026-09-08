@@ -63,6 +63,29 @@ function rewriteCookie(value: string): string {
   return value.replace(/;\s*Domain=[^;]+/gi, '');
 }
 
+function stripHopByHopHeaders(headers: IncomingMessage['headers']): IncomingMessage['headers'] {
+  const result = { ...headers };
+  const connectionHeaders = String(headers.connection || '')
+    .toLowerCase()
+    .split(',')
+    .map((name) => name.trim());
+  for (const name of [
+    ...connectionHeaders,
+    'connection',
+    'keep-alive',
+    'proxy-connection',
+    'proxy-authenticate',
+    'proxy-authorization',
+    'te',
+    'trailer',
+    'transfer-encoding',
+    'upgrade',
+  ]) {
+    delete result[name];
+  }
+  return result;
+}
+
 export class EcodeDevProxyServer {
   readonly outputDirectory: string;
   readonly target: URL;
@@ -100,8 +123,25 @@ export class EcodeDevProxyServer {
     if (this.server && this.address) return this.address;
     const server = createHttpServer((request, response) => {
       this.handleRequest(request, response).catch((error) => {
-        this.logger.error('eCode development proxy request failed.', error);
-        if (!response.headersSent) response.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+        const failure = error as Error & { code?: string; reason?: string; bytesParsed?: number };
+        this.logger.error('eCode development proxy request failed.', {
+          method: request.method,
+          target: this.target.origin,
+          path: new URL(request.url || '/', 'http://ecode.local').pathname,
+          code: failure.code,
+          message: failure.message,
+          reason: failure.reason,
+          bytesParsed: failure.bytesParsed,
+          hint: failure.code?.startsWith('HPE_')
+            ? 'Upstream returned an invalid HTTP response. Check the target HTTP/HTTPS scheme, port, and upstream gateway response framing.'
+            : undefined,
+        });
+        if (response.destroyed || response.writableEnded) return;
+        if (response.headersSent) {
+          response.destroy();
+          return;
+        }
+        response.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
         response.end('Bad Gateway');
       });
     });
@@ -184,7 +224,9 @@ export class EcodeDevProxyServer {
   }
 
   private async proxyRequest(request: IncomingMessage, response: import('node:http').ServerResponse): Promise<void> {
-    const headers = { ...request.headers };
+    const headers = stripHopByHopHeaders(request.headers);
+    // Isolate upstream connections from browser keep-alive and legacy gateway framing errors.
+    headers.connection = 'close';
     if (this.changeOrigin) headers.host = this.target.host;
     const requestFn = this.target.protocol === 'https:' ? httpsRequest : httpRequest;
     await new Promise<void>((resolve, reject) => {
@@ -196,10 +238,11 @@ export class EcodeDevProxyServer {
           method: request.method,
           path: getTargetPath(this.target, request.url || '/'),
           headers,
+          agent: false,
           rejectUnauthorized: this.strictSSL,
         },
         (upstreamResponse) => {
-          const responseHeaders = { ...upstreamResponse.headers };
+          const responseHeaders = stripHopByHopHeaders(upstreamResponse.headers);
           const localOrigin = getLocalOrigin(request, this.address);
           if (this.rewriteRedirects && typeof responseHeaders.location === 'string') {
             responseHeaders.location = rewriteLocation(responseHeaders.location, this.target, localOrigin);
@@ -215,6 +258,11 @@ export class EcodeDevProxyServer {
       );
       upstream.once('error', reject);
       request.once('error', reject);
+      response.once('close', () => {
+        upstream.destroy();
+        resolve();
+      });
+      request.once('aborted', () => upstream.destroy());
       request.pipe(upstream);
     });
   }

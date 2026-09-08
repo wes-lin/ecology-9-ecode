@@ -54,6 +54,86 @@ function createProject() {
 }
 
 describe('EcodeProjectBuilder', () => {
+  it('does not rebuild for identical metadata rewritten by tree synchronization', async () => {
+    const project = createProject();
+    try {
+      const builder = new EcodeProjectBuilder({ projectRoot: project.root });
+      await builder.build();
+      const configPath = path.join(project.root, '.ecode/apps/app.json');
+      fs.writeFileSync(configPath, fs.readFileSync(configPath));
+      const result = await builder.reloadConfiguration();
+      assert.deepEqual(result.builtAppIds, []);
+      write(project.root, `src/${project.appPath}/provider.js`, 'window.changedAfterMetadata = true;');
+      const changed = await builder.reloadConfiguration();
+      assert.deepEqual(changed.builtAppIds, [project.appId]);
+      assert.match(
+        fs.readFileSync(path.join(project.root, 'dist/release', project.appId, 'index.js'), 'utf8'),
+        /changedAfterMetadata/
+      );
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('cancels a full build without saving reusable partial output', async () => {
+    const project = createProject();
+    try {
+      const controller = new AbortController();
+      const messages = [];
+      const builder = new EcodeProjectBuilder({
+        projectRoot: project.root,
+        signal: controller.signal,
+        logger: {
+          debug() {},
+          warn() {},
+          error() {},
+          info(message) {
+            messages.push(message);
+            if (message.includes('[1/1]')) controller.abort();
+          },
+        },
+      });
+      await assert.rejects(builder.build(), { name: 'AbortError' });
+      assert.equal(fs.existsSync(path.join(project.root, 'dist/.ecode-dev-runtime/build-state.json')), false);
+      assert.equal(
+        messages.some((message) => message.includes('Building global')),
+        false
+      );
+      const restarted = await new EcodeProjectBuilder({ projectRoot: project.root }).prepare();
+      assert.deepEqual(restarted.builtAppIds, [project.appId]);
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
+  it('detects edits arriving after an app was compiled during a full build', async () => {
+    const project = createProject();
+    try {
+      const builder = new EcodeProjectBuilder({
+        projectRoot: project.root,
+        logger: {
+          debug() {},
+          warn() {},
+          error() {},
+          info(message) {
+            if (message.includes('Building global')) {
+              write(project.root, `src/${project.appPath}/provider.js`, 'window.editedDuringBuild = true;');
+            }
+          },
+        },
+      });
+      await builder.build();
+      const restarted = await new EcodeProjectBuilder({ projectRoot: project.root }).prepare();
+      assert.deepEqual(restarted.builtAppIds, [project.appId]);
+      assert.match(
+        fs.readFileSync(path.join(project.root, 'dist/release', project.appId, 'index.js'), 'utf8'),
+        /editedDuringBuild/
+      );
+    } finally {
+      fs.rmSync(project.root, { recursive: true, force: true });
+    }
+  });
+
   it('builds app JavaScript, CSS, resources, and pre-state files', async () => {
     const project = createProject();
     try {

@@ -139,7 +139,14 @@ export async function synchronizeEcodeAppConfigs(treeFilePath: string): Promise<
       throw new Error(`Duplicate eCode app node id "${nodeId}" in ecode-tree.json.`);
     }
     expectedFiles.add(fileName);
-    await fs.writeFile(path.join(appsDirectory, fileName), `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+    const configPath = path.join(appsDirectory, fileName);
+    const contents = `${JSON.stringify(config, null, 2)}\n`;
+    try {
+      if ((await fs.readFile(configPath, 'utf8')) === contents) continue;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    await fs.writeFile(configPath, contents, 'utf8');
   }
 
   for (const entry of await fs.readdir(appsDirectory, { withFileTypes: true })) {

@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
+import { setImmediate as yieldToEvents } from 'node:timers/promises';
 import { compileJavaScript, type EcodeAppConfig } from 'ecode-sdk';
 import { normalizePathKey, toPosixPath } from '../paths';
 import { listFiles } from './file-utils';
@@ -72,7 +73,8 @@ export async function buildAppJavaScript(
   app: EcodeAppConfig,
   sourceRoot: string,
   outputRoot: string,
-  treeOrders: Map<string, number>
+  treeOrders: Map<string, number>,
+  signal?: AbortSignal
 ): Promise<void> {
   await fs.mkdir(outputRoot, { recursive: true });
   const files = await listFiles(sourceRoot);
@@ -83,6 +85,7 @@ export async function buildAppJavaScript(
   const javaScriptFiles: SourceFile[] = [];
 
   for (const filePath of files) {
+    signal?.throwIfAborted();
     const relative = relativePath(filePath);
     const key = normalizePathKey(relative);
     if (!/\.(js|jsx)$/i.test(relative) || preStateFiles.has(key) || resourceFiles.has(key) || configFiles.has(key)) {
@@ -99,14 +102,17 @@ export async function buildAppJavaScript(
     });
   }
 
-  const compiledJavaScript = sortJavaScriptFiles(javaScriptFiles)
-    .map((file) => {
-      const compiled = removeUseStrict(
-        compileJavaScript(applyAppId(file.source, app.appId), { filename: file.absolutePath })
-      );
-      return appendSourceComment(compiled, `${app.path}/${file.relativePath}`);
-    })
-    .join('');
+  const parts: string[] = [];
+  for (const file of sortJavaScriptFiles(javaScriptFiles)) {
+    await yieldToEvents();
+    signal?.throwIfAborted();
+    const compiled = removeUseStrict(
+      compileJavaScript(applyAppId(file.source, app.appId), { filename: file.absolutePath })
+    );
+    parts.push(appendSourceComment(compiled, `${app.path}/${file.relativePath}`));
+  }
+  signal?.throwIfAborted();
+  const compiledJavaScript = parts.join('');
   const outputPath = path.join(outputRoot, 'index.js');
   if (javaScriptFiles.length > 0) await fs.writeFile(outputPath, wrapJavaScript(compiledJavaScript), 'utf8');
   else await fs.rm(outputPath, { force: true });

@@ -1,5 +1,6 @@
 import { existsSync, watch, type FSWatcher } from 'node:fs';
 import * as path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { EcodeProjectBuilder } from './builders/project';
 import { EcodeDevProxyServer } from './proxy';
 import {
@@ -40,11 +41,18 @@ export class EcodeDevRuntime {
   private pendingFiles = new Set<string>();
   private configurationChanged = false;
   private buildQueue: Promise<unknown> = Promise.resolve();
+  private readonly cancellation = new AbortController();
+  private pendingFlush?: Promise<EcodeDevBuildResult | undefined>;
+  private lastChangeAt = 0;
+  private disposal?: Promise<void>;
 
   constructor(options: EcodeDevRuntimeOptions) {
     this.options = { ...options, projectRoot: path.resolve(options.projectRoot) };
     this.logger = options.logger || NOOP_DEV_LOGGER;
-    this.builder = new EcodeProjectBuilder(this.options);
+    this.builder = new EcodeProjectBuilder({
+      ...this.options,
+      signal: options.signal ? AbortSignal.any([options.signal, this.cancellation.signal]) : this.cancellation.signal,
+    });
   }
 
   build(): Promise<EcodeDevBuildResult> {
@@ -68,6 +76,7 @@ export class EcodeDevRuntime {
   }
 
   notifyFileChange(filePath: string): void {
+    if (this.cancellation.signal.aborted) return;
     const resolvedPath = path.resolve(filePath);
     if (isTemporaryFile(resolvedPath)) {
       this.logger.debug(`Ignored temporary file ${resolvedPath}.`);
@@ -85,23 +94,38 @@ export class EcodeDevRuntime {
   }
 
   notifyConfigurationChange(): void {
+    if (this.cancellation.signal.aborted) return;
     this.configurationChanged = true;
     this.scheduleChanges();
   }
 
-  flushChanges(): Promise<EcodeDevBuildResult | undefined> {
+  flushChanges(waitForQuiet = false): Promise<EcodeDevBuildResult | undefined> {
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     this.debounceTimer = undefined;
-    const files = [...this.pendingFiles];
-    const configurationChanged = this.configurationChanged;
-    this.pendingFiles.clear();
-    this.configurationChanged = false;
-    if (configurationChanged) return this.reloadConfiguration();
-    if (files.length > 0) return this.rebuildFiles(files);
-    return Promise.resolve(undefined);
+    if (this.cancellation.signal.aborted) return Promise.resolve(undefined);
+    if (this.pendingFlush) return this.pendingFlush;
+    const flush = this.enqueue(async () => {
+      if (waitForQuiet) {
+        let remaining: number;
+        while ((remaining = this.lastChangeAt + (this.options.watchDebounceMs ?? 500) - Date.now()) > 0) {
+          await delay(remaining, undefined, { signal: this.cancellation.signal });
+        }
+      }
+      this.pendingFlush = undefined;
+      const files = [...this.pendingFiles];
+      const configurationChanged = this.configurationChanged;
+      this.pendingFiles.clear();
+      this.configurationChanged = false;
+      if (configurationChanged) return this.builder.reloadConfiguration();
+      if (files.length > 0) return this.builder.rebuildFiles(files);
+      return undefined;
+    });
+    this.pendingFlush = flush;
+    return flush;
   }
 
   async startProxy(): Promise<EcodeDevServerAddress> {
+    this.cancellation.signal.throwIfAborted();
     if (!this.options.proxyTarget) throw new Error('proxyTarget is required to start the eCode development proxy.');
     if (!this.proxy) {
       this.proxy = new EcodeDevProxyServer({
@@ -127,6 +151,7 @@ export class EcodeDevRuntime {
   }
 
   startWatching(): void {
+    this.cancellation.signal.throwIfAborted();
     if (this.watchers.length > 0) return;
     const roots = [path.join(this.options.projectRoot, 'src'), path.join(this.options.projectRoot, '.ecode')];
     for (const root of roots) {
@@ -160,25 +185,42 @@ export class EcodeDevRuntime {
     }
   }
 
-  async dispose(): Promise<void> {
+  cancel(): void {
+    this.cancellation.abort();
     this.stopWatching();
-    await this.stopProxy();
-    await this.buildQueue.catch(() => undefined);
-    await this.builder.flushBuildState();
+  }
+
+  dispose(): Promise<void> {
+    if (!this.disposal) {
+      this.cancel();
+      this.disposal = (async () => {
+        await this.stopProxy();
+        await this.buildQueue.catch(() => undefined);
+      })();
+    }
+    return this.disposal;
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.buildQueue.catch(() => undefined).then(operation);
+    const result = this.buildQueue
+      .catch(() => undefined)
+      .then(() => {
+        this.cancellation.signal.throwIfAborted();
+        return operation();
+      });
     this.buildQueue = result;
     return result;
   }
 
   private scheduleChanges(): void {
+    this.lastChangeAt = Date.now();
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = undefined;
-      void this.flushChanges().catch((error) => this.logger.error('Automatic eCode rebuild failed.', error));
-    }, this.options.watchDebounceMs ?? 80);
+      void this.flushChanges(true).catch((error) => {
+        if (!this.cancellation.signal.aborted) this.logger.error('Automatic eCode rebuild failed.', error);
+      });
+    }, this.options.watchDebounceMs ?? 500);
   }
 }
 
