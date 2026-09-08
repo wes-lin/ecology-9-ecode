@@ -1,10 +1,11 @@
 import { promises as fs } from 'node:fs';
+import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 import { normalizePathKey, toPosixPath } from '../paths';
 import type { EcodePreStateCache } from './prestate';
 import { fileExists, listFiles } from './file-utils';
 
-const BUILD_STATE_VERSION = 1;
+const BUILD_STATE_VERSION = 2;
 
 type FileSnapshotEntry = {
   path: string;
@@ -80,7 +81,7 @@ export class EcodeBuildStateStore {
   }
 
   captureMetadata(): Promise<FileSnapshot> {
-    return this.getMetadataFiles().then((filePaths) => this.captureFiles(filePaths));
+    return this.getMetadataFiles().then((filePaths) => this.captureFiles(filePaths, true));
   }
 
   async captureSources(): Promise<FileSnapshot> {
@@ -172,10 +173,10 @@ export class EcodeBuildStateStore {
     return files;
   }
 
-  private async captureFiles(filePaths: string[]): Promise<FileSnapshot> {
+  private async captureFiles(filePaths: string[], contentHash = false): Promise<FileSnapshot> {
     const entries = await Promise.all(
       filePaths.map(async (filePath): Promise<[string, FileSnapshotEntry] | undefined> => {
-        const signature = await this.readSignature(filePath);
+        const signature = contentHash ? await this.readContentSignature(filePath) : await this.readSignature(filePath);
         if (signature === undefined) return undefined;
         const relativePath = this.toStatePath(filePath);
         return [normalizePathKey(relativePath), { path: relativePath, signature }];
@@ -188,6 +189,17 @@ export class EcodeBuildStateStore {
     try {
       const stat = await fs.stat(filePath);
       return stat.isFile() ? `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}` : undefined;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    }
+  }
+
+  private async readContentSignature(filePath: string): Promise<string | undefined> {
+    try {
+      return createHash('sha256')
+        .update(await fs.readFile(filePath))
+        .digest('hex');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
       throw error;

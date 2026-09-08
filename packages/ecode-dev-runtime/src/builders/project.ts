@@ -70,6 +70,7 @@ export class EcodeProjectBuilder {
   readonly treeFile: string;
   readonly preStateBaseJavaScriptFiles: string[];
   private readonly logger: EcodeDevLogger;
+  private readonly signal?: AbortSignal;
   private readonly preStateBuilder: EcodePreStateBuilder;
   private readonly buildStateStore: EcodeBuildStateStore;
   private cachedBuildState?: EcodeBuildState;
@@ -90,10 +91,12 @@ export class EcodeProjectBuilder {
       ? options.preStateBaseJavaScriptFiles.map((filePath) => path.resolve(this.projectRoot, filePath))
       : getBundledPreStateBaseJavaScriptFiles();
     this.logger = options.logger || NOOP_DEV_LOGGER;
+    this.signal = options.signal;
     this.preStateBuilder = new EcodePreStateBuilder({
       sourceDirectory: this.sourceDirectory,
       outputDirectory: this.outputDirectory,
       baseJavaScriptFiles: this.preStateBaseJavaScriptFiles,
+      signal: this.signal,
     });
     this.buildStateStore = new EcodeBuildStateStore({
       projectRoot: this.projectRoot,
@@ -110,21 +113,30 @@ export class EcodeProjectBuilder {
   }
 
   async build(): Promise<EcodeDevBuildResult> {
+    this.signal?.throwIfAborted();
     const startedAt = performance.now();
     this.invalidateConfigurationCache();
     const apps = this.loadReleasedApps();
+    // Record inputs before compilation so edits arriving during a build remain detectable.
+    const metadata = await this.buildStateStore.captureMetadata();
+    const sources = await this.buildStateStore.captureSources();
+    this.signal?.throwIfAborted();
+    await fs.rm(this.buildStateStore.stateFile, { force: true });
     this.logger.info(`Building ${apps.length} released eCode app(s).`);
     await fs.rm(path.join(this.outputDirectory, 'release'), { recursive: true, force: true });
     await fs.rm(path.join(this.outputDirectory, 'dev'), { recursive: true, force: true });
 
     const tree = await this.readTree();
     for (const [index, app] of apps.entries()) {
+      this.signal?.throwIfAborted();
       this.logger.info(`[${index + 1}/${apps.length}] Building eCode app ${app.appId}.`);
       await this.buildApp(app, tree);
     }
+    this.signal?.throwIfAborted();
     this.logger.info('Building global eCode pre-state output.');
     await this.preStateBuilder.build(apps);
-    await this.recreateBuildState();
+    this.signal?.throwIfAborted();
+    await this.recreateBuildState({ metadata, sources });
 
     const result = {
       builtAppIds: apps.map((app) => app.appId),
@@ -136,6 +148,7 @@ export class EcodeProjectBuilder {
   }
 
   async prepare(): Promise<EcodeDevBuildResult> {
+    this.signal?.throwIfAborted();
     const startedAt = performance.now();
     this.invalidateConfigurationCache();
     const state = await this.buildStateStore.load();
@@ -184,6 +197,7 @@ export class EcodeProjectBuilder {
   }
 
   async rebuildFiles(filePaths: string[]): Promise<EcodeDevBuildResult> {
+    this.signal?.throwIfAborted();
     const startedAt = performance.now();
     const changedFiles = new Map<string, string>();
     for (const filePath of filePaths) {
@@ -267,26 +281,54 @@ export class EcodeProjectBuilder {
       );
     }
     const tree = javaScriptTargets.length > 0 ? await this.readTree() : undefined;
-    const tasks: Promise<void>[] = [];
+    const tasks: Array<() => Promise<void>> = [];
 
     for (const target of targets) {
       const sourceRoot = this.getAppSourceDirectory(target.app);
       const outputRoot = this.getAppOutputDirectory(target.app);
       if (target.javaScript) {
-        tasks.push(buildAppJavaScript(target.app, sourceRoot, outputRoot, this.getTreeOrders(tree!, target.app.appId)));
+        tasks.push(() =>
+          buildAppJavaScript(
+            target.app,
+            sourceRoot,
+            outputRoot,
+            this.getTreeOrders(tree!, target.app.appId),
+            this.signal
+          )
+        );
       }
-      if (target.css) tasks.push(buildAppCss(target.app, sourceRoot, outputRoot));
+      if (target.css) tasks.push(() => buildAppCss(target.app, sourceRoot, outputRoot));
       for (const relativePath of target.resources) {
-        tasks.push(rebuildResource(target.app, sourceRoot, outputRoot, relativePath));
+        tasks.push(() => rebuildResource(target.app, sourceRoot, outputRoot, relativePath));
       }
     }
     if (preStateJavaScriptFiles.size > 0) {
-      tasks.push(this.preStateBuilder.buildJavaScript(apps, [...preStateJavaScriptFiles.values()]));
+      tasks.push(() => this.preStateBuilder.buildJavaScript(apps, [...preStateJavaScriptFiles.values()]));
     }
     if (preStateCssFiles.size > 0) {
-      tasks.push(this.preStateBuilder.buildCss(apps, [...preStateCssFiles.values()]));
+      tasks.push(() => this.preStateBuilder.buildCss(apps, [...preStateCssFiles.values()]));
     }
-    await Promise.all(tasks);
+    this.signal?.throwIfAborted();
+    if (tasks.length > 0) await fs.rm(this.buildStateStore.stateFile, { force: true });
+    let nextTask = 0;
+    let failed = false;
+    const workers = await Promise.allSettled(
+      Array.from({ length: Math.min(4, tasks.length) }, async () => {
+        while (!failed && nextTask < tasks.length) {
+          this.signal?.throwIfAborted();
+          const task = tasks[nextTask++];
+          try {
+            await task();
+          } catch (error) {
+            failed = true;
+            throw error;
+          }
+        }
+      })
+    );
+    const failure = workers.find((worker) => worker.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+    this.signal?.throwIfAborted();
     await this.persistBuildStateUpdates(absolutePaths, changedSourceSnapshot);
 
     const result = {
@@ -303,7 +345,7 @@ export class EcodeProjectBuilder {
   }
 
   async reloadConfiguration(): Promise<EcodeDevBuildResult> {
-    return this.build();
+    return this.prepare();
   }
 
   async flushBuildState(): Promise<void> {
@@ -341,11 +383,12 @@ export class EcodeProjectBuilder {
     this.buildStateDirty = false;
   }
 
-  private async recreateBuildState(): Promise<void> {
+  private async recreateBuildState(inputs?: Pick<EcodeBuildState, 'metadata' | 'sources'>): Promise<void> {
     const preState = this.preStateBuilder.createCache();
     if (!preState) return;
     try {
       this.cachedBuildState = await this.buildStateStore.create(preState);
+      if (inputs) Object.assign(this.cachedBuildState, inputs);
       await this.buildStateStore.save(this.cachedBuildState);
       this.buildStateDirty = false;
     } catch (error) {
@@ -407,12 +450,15 @@ export class EcodeProjectBuilder {
   }
 
   private async buildApp(app: EcodeAppConfig, tree: EcodeTreeNode[]): Promise<void> {
+    this.signal?.throwIfAborted();
     const sourceRoot = this.getAppSourceDirectory(app);
     const outputRoot = this.getAppOutputDirectory(app);
     await fs.rm(outputRoot, { recursive: true, force: true });
     await fs.mkdir(outputRoot, { recursive: true });
-    await buildAppJavaScript(app, sourceRoot, outputRoot, this.getTreeOrders(tree, app.appId));
+    await buildAppJavaScript(app, sourceRoot, outputRoot, this.getTreeOrders(tree, app.appId), this.signal);
+    this.signal?.throwIfAborted();
     await buildAppCss(app, sourceRoot, outputRoot);
+    this.signal?.throwIfAborted();
     await copyAppResources(app, sourceRoot, outputRoot);
   }
 }

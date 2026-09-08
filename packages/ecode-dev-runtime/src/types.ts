@@ -14,6 +14,8 @@ export const NOOP_DEV_LOGGER: EcodeDevLogger = {
 
 export type EcodeDevBuildOptions = {
   projectRoot: string;
+  /** Cooperative cancellation, checked between compilation tasks. */
+  signal?: AbortSignal;
   outputDirectory?: string;
   appsDirectory?: string;
   treeFile?: string;
