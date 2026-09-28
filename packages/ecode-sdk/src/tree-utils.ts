@@ -2,7 +2,38 @@ import type { RemoteTreeItem } from './type';
 
 export type EcodeTreeItem = Omit<RemoteTreeItem, 'children'> & {
   children?: EcodeTreeItem[];
+  localOnly?: boolean;
 };
+
+const COMMON_TREE_FIELDS = ['id', 'name', 'treeType', 'businessType', 'attribute', 'state', 'fileExtension', 'localOnly'] as const;
+const APP_TREE_FIELDS = [
+  'initialAppId',
+  'status',
+  'preStateOrder',
+  'debugMode',
+  'parentId',
+  'coverConfig',
+  'shareMd',
+  'caseVersion',
+] as const;
+
+/** Keep only metadata used by local editing, builds, exports, and Jenkins app selection. */
+export function compactEcodeTree(items: EcodeTreeItem[]): EcodeTreeItem[] {
+  return items.map((item) => {
+    const compact: EcodeTreeItem = {};
+    for (const field of COMMON_TREE_FIELDS) {
+      if (item[field] !== undefined) Object.assign(compact, { [field]: item[field] });
+    }
+    if (getEcodeAppId(item)) {
+      for (const field of APP_TREE_FIELDS) {
+        if (item[field] !== undefined) Object.assign(compact, { [field]: item[field] });
+      }
+    }
+    if (item.treeType === 'resource' && item.route !== undefined) compact.route = item.route;
+    if (Array.isArray(item.children)) compact.children = compactEcodeTree(item.children);
+    return compact;
+  });
+}
 
 export function getEcodeAppId(item: RemoteTreeItem): string {
   const isApp = Boolean(item.initialAppId) || item.attribute === 'system';

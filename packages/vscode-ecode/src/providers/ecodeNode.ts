@@ -19,6 +19,8 @@ export type EcodeNodeOptions = {
   fileExtension?: string;
   loading?: boolean;
   debugMode?: 'y' | 'n';
+  unassociated?: boolean;
+  localOnly?: boolean;
 };
 
 export class EcodeNode {
@@ -40,6 +42,8 @@ export class EcodeNode {
   fileExtension?: string;
   loading = false;
   debugMode?: 'y' | 'n';
+  unassociated = false;
+  localOnly = false;
   children?: EcodeNode[];
 
   constructor(options: EcodeNodeOptions) {

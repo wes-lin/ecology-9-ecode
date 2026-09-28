@@ -33,7 +33,9 @@ await client.uploadResource('/local/path.js', 'remote-folder-id');
 
 `client.download(outputRoot)` loads the complete remote tree, downloads source
 files to `<outputRoot>/src`, and generates
-`<outputRoot>/.ecode/ecode-tree.json`.
+`<outputRoot>/.ecode/ecode-tree.json`. The saved tree retains the node hierarchy,
+file order, and metadata needed for local builds, exports, and app selection while
+omitting unused remote API fields.
 
 Existing source files are kept by default. Pass `{ overwrite: true }` to
 replace them. Integrations can use `prepareTree` to merge the new remote tree

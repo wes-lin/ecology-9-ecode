@@ -380,7 +380,7 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
 
   async createNewApp(element: EcodeNode): Promise<void> {
     if (element.businessType !== 'type' && element.businessType !== 'project') {
-      vscode.window.showWarningMessage('New app is only supported under type nodes.');
+      vscode.window.showWarningMessage('New app is only supported under type or project nodes.');
       return;
     }
 
@@ -397,23 +397,25 @@ export class EcodeTreeDataProvider extends BaseEcodeTreeDataProvider {
     });
   }
 
-  async createNewType(element: EcodeNode): Promise<void> {
-    if (element.businessType !== 'type') {
-      vscode.window.showWarningMessage('New type is only supported under type nodes.');
+  async createNewType(element?: EcodeNode): Promise<void> {
+    if (element && element.businessType !== 'type' && element.businessType !== 'project') {
+      vscode.window.showWarningMessage('New type is only supported at the root or under type or project nodes.');
       return;
     }
 
     const name = await this._promptForName({ title: 'Create New Type', kind: 'type' });
     if (!name) return;
 
-    await this._withNodeLoading(element, async () => {
+    const create = async (): Promise<void> => {
       try {
         await this._operations.createType(element, name);
         await this.refreshFolder(element);
       } catch (error) {
         vscode.window.showErrorMessage(`Create type failed: ${getErrorMessage(error)}`);
       }
-    });
+    };
+    if (element) await this._withNodeLoading(element, create);
+    else await create();
   }
 
   async createNewFolder(element: EcodeNode): Promise<void> {

@@ -3,7 +3,7 @@
   "displayName": "Weaver Ecology eCode",
   "description": "Develop, debug, synchronize, and publish Weaver Ecology 9 eCode apps in VS Code",
   "icon": "assets/ecode.png",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publisher": "ecode-dev-assistant",
   "repository": {
     "url": "https://github.com/wes-lin/ecology-9-ecode/tree/main/packages/vscode-ecode"
@@ -248,6 +248,7 @@
       {
         "command": "ecode.createNewType",
         "title": "New Type",
+        "icon": "$(symbol-folder)",
         "enablement": "!ecodeExplorer.busy"
       },
       {
@@ -288,6 +289,30 @@
         "enablement": "!ecodeLocalExplorer.publishSelection"
       },
       {
+        "command": "ecode.local.chooseAssociation",
+        "title": "Associate Local Item",
+        "icon": "$(link)",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.associateAsApp",
+        "title": "Associate as App",
+        "icon": "$(package)",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.associateAsType",
+        "title": "Associate as Type",
+        "icon": "$(symbol-folder)",
+        "category": "eCode"
+      },
+      {
+        "command": "ecode.local.associateSingle",
+        "title": "Associate Local Item",
+        "icon": "$(link)",
+        "category": "eCode"
+      },
+      {
         "command": "ecode.local.createNewApp",
         "title": "New Local App",
         "category": "eCode",
@@ -296,6 +321,14 @@
       {
         "command": "ecode.local.createNewType",
         "title": "New Local Type",
+        "icon": "$(symbol-folder)",
+        "category": "eCode",
+        "enablement": "!ecodeLocalExplorer.publishSelection"
+      },
+      {
+        "command": "ecode.local.resetAssociation",
+        "title": "Reset Local Association",
+        "icon": "$(debug-restart)",
         "category": "eCode",
         "enablement": "!ecodeLocalExplorer.publishSelection"
       },
@@ -409,6 +442,13 @@
       }
     ],
     "menus": {
+      "commandPalette": [
+        { "command": "ecode.local.chooseAssociation", "when": "false" },
+        { "command": "ecode.local.associateAsApp", "when": "false" },
+        { "command": "ecode.local.associateAsType", "when": "false" },
+        { "command": "ecode.local.associateSingle", "when": "false" },
+        { "command": "ecode.local.resetAssociation", "when": "false" }
+      ],
       "view/title": [
         {
           "command": "ecode.switchEnvironment",
@@ -446,6 +486,11 @@
           "group": "navigation@5"
         },
         {
+          "command": "ecode.local.createNewType",
+          "when": "view == ecodeLocalExplorer && !ecodeLocalExplorer.publishSelection",
+          "group": "navigation@8"
+        },
+        {
           "command": "ecode.dev.start",
           "when": "view == ecodeLocalExplorer && !ecode.dev.running && !ecode.dev.busy && !ecodeExplorer.busy && !ecodeLocalExplorer.publishSelection",
           "group": "navigation@6"
@@ -474,6 +519,11 @@
           "command": "ecode.openSettings",
           "when": "view == ecodeExplorer",
           "group": "navigation@2"
+        },
+        {
+          "command": "ecode.createNewType",
+          "when": "view == ecodeExplorer && !ecodeExplorer.busy",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -568,6 +618,26 @@
           "group": "navigation@1"
         },
         {
+          "command": "ecode.local.associateAsApp",
+          "when": "view == ecodeLocalExplorer && viewItem == localUnassociatedKindChoice && !ecodeLocalExplorer.publishSelection",
+          "group": "inline@0"
+        },
+        {
+          "command": "ecode.local.associateAsType",
+          "when": "view == ecodeLocalExplorer && viewItem == localUnassociatedKindChoice && !ecodeLocalExplorer.publishSelection",
+          "group": "inline@1"
+        },
+        {
+          "command": "ecode.local.associateAsType",
+          "when": "view == ecodeLocalExplorer && viewItem == localUnassociatedType && !ecodeLocalExplorer.publishSelection",
+          "group": "inline@0"
+        },
+        {
+          "command": "ecode.local.associateSingle",
+          "when": "view == ecodeLocalExplorer && viewItem == localUnassociatedSingle && !ecodeLocalExplorer.publishSelection",
+          "group": "inline@0"
+        },
+        {
           "command": "ecode.local.refresh",
           "when": "view == ecodeLocalExplorer && viewItem =~ /localFolder/",
           "group": "navigation@0"
@@ -638,9 +708,19 @@
           "group": "modify@0"
         },
         {
+          "command": "ecode.local.resetAssociation",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /localCanResetAssociation/ && !ecodeLocalExplorer.publishSelection",
+          "group": "modify@1"
+        },
+        {
           "command": "ecode.local.deleteItem",
           "when": "view == ecodeLocalExplorer && viewItem =~ /localCanDelete/",
-          "group": "modify@1"
+          "group": "modify@2"
+        },
+        {
+          "command": "ecode.local.deleteItem",
+          "when": "view == ecodeLocalExplorer && viewItem =~ /^localUnassociated/ && !ecodeLocalExplorer.publishSelection",
+          "group": "modify@2"
         }
       ]
     }

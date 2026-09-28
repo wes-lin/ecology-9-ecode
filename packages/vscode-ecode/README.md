@@ -67,9 +67,13 @@ Opening a remote JavaScript, CSS, or Markdown file creates an editable virtual d
 
 ## Download and Local Metadata
 
-Running **Download** from the Local view downloads source files to `<localDir>/src`, overwrites existing remote-backed source files, and replaces `<localDir>/.ecode/ecode-tree.json` with the latest complete remote tree.
+Running **Download** from the Local view downloads source files to `<localDir>/src`, overwrites existing remote-backed source files, and replaces `<localDir>/.ecode/ecode-tree.json` with the latest remote hierarchy containing only metadata used by local builds, exports, and app selection.
 
 The extension watches `ecode-tree.json` and regenerates `.ecode/apps` whenever the tree is created, changed, or deleted. Stale generated app files are removed automatically.
+
+Directories and files added directly under `src` appear in the Local view. Click an item to associate it. For a new directory under a type or project, choose **App** or **Type** in the picker, or use the two inline buttons. You can also delete unassociated directories and files from the Local view. Existing tree nodes and their IDs are preserved.
+
+If a locally created or manually associated app or type was linked incorrectly, right-click it in the Local view and choose **Reset Local Association**. Downloaded nodes do not offer this action. Reset removes the local tree records and generated app metadata while keeping the folder and files on disk. Click the folder to choose **App** or **Type** again, or delete it from the Local view.
 
 Locally created apps and types use 32-character UUIDs without separators. Other locally created folders and files use `local-<UUID>` identifiers so they can be distinguished from downloaded nodes.
 

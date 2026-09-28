@@ -1,11 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import {
-  buildAppUpgradePackage,
-  collectEcodeAppConfigs,
-  publishAppUpgradePackage,
-} from 'ecode-sdk';
+import { buildAppUpgradePackage, collectEcodeAppConfigs, publishAppUpgradePackage } from 'ecode-sdk';
 import { EcodeSettingsRepository } from '../config/ecodeSettingsRepository';
 import type { EcodeLocalTreeItem } from '../config/ecodeLocalTree';
 import { ActiveEcodeClientProvider } from '../utils/ecodeClientFactory';
@@ -22,6 +18,8 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
   private readonly _store: LocalEcodeTreeStore;
   private _roots: EcodeNode[] = [];
   private _loaded = false;
+  private _loadRevision = 0;
+  private _loadPromise?: Promise<void>;
   private _reloadQueue: Promise<void> = Promise.resolve();
   private _publishing = false;
   private _publishSelectionActive = false;
@@ -40,6 +38,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
   }
 
   async refresh(): Promise<void> {
+    this._loadRevision += 1;
     this._loaded = false;
     this._roots = [];
     this._onDidChangeTreeData.fire();
@@ -59,8 +58,7 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
         }
 
         if (tree) await this._store.synchronize();
-        this._loaded = false;
-        this._roots = [];
+        await this.refresh();
         await this._ensureLoaded();
         this._store.materializeFolders(this._roots);
         this._onDidChangeTreeData.fire();
@@ -84,6 +82,14 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
 
   getTreeItem(element: EcodeNode): vscode.TreeItem {
     const item = super.getTreeItem(element);
+    if (element.unassociated) {
+      item.collapsibleState = vscode.TreeItemCollapsibleState.None;
+      item.command = this._publishSelectionActive
+        ? undefined
+        : { command: 'ecode.local.chooseAssociation', title: 'Associate Local Item', arguments: [element] };
+      if (this._publishSelectionActive) item.contextValue = 'localPublishSelection';
+      return item;
+    }
     if (this._publishSelectionActive) {
       item.contextValue = 'localPublishSelection';
       item.command = undefined;
@@ -123,6 +129,39 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     });
   }
 
+  async chooseAssociation(element: EcodeNode): Promise<void> {
+    if (!element.unassociated) return;
+    if (
+      element.type === 'folder' &&
+      (element.parent?.businessType === 'type' || element.parent?.businessType === 'project')
+    ) {
+      const picked = await vscode.window.showQuickPick(
+        [
+          { label: 'App', description: 'Associate as a app', directoryKind: 'app' as const },
+          { label: 'Type', description: 'Associate as a type', directoryKind: 'type' as const },
+        ],
+        { title: `Associate ${element.remotePath}`, placeHolder: 'Choose what this directory represents' }
+      );
+      if (!picked) return;
+      await this.associateSelected(element, picked.directoryKind);
+      return;
+    }
+    await this.associateSelected(element, element.type === 'folder' && !element.parent ? 'type' : undefined);
+  }
+
+  async associateSelected(element: EcodeNode, kind?: 'app' | 'type'): Promise<void> {
+    if (!element.unassociated) return;
+    await this._reloadQueue;
+    const result = await this._store.associateLocalItem(element.remotePath, kind);
+    await this.refresh();
+    const added = result.apps + result.types + result.folders + result.files;
+    vscode.window.showInformationMessage(`Associated ${element.remotePath} (${added} item${added === 1 ? '' : 's'}).`);
+  }
+
+  isSourcePath(changedPath: string): boolean {
+    return this._store.isSourcePath(changedPath);
+  }
+
   async createNewApp(parent: EcodeNode): Promise<void> {
     if (parent.businessType !== 'type' && parent.businessType !== 'project') {
       throw new Error('New app is only supported under type or project nodes.');
@@ -135,25 +174,24 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
     await this.refresh();
   }
 
-  async createNewType(parent: EcodeNode): Promise<void> {
-    if (parent.businessType !== 'type') {
-      throw new Error('New type is only supported under type nodes.');
+  async createNewType(parent?: EcodeNode): Promise<void> {
+    if (parent && parent.businessType !== 'type' && parent.businessType !== 'project') {
+      throw new Error('New type is only supported at the root or under type or project nodes.');
     }
     const name = await this._promptForName({ title: 'Create Local Type', kind: 'type' });
     if (!name) return;
 
-    const targetPath = this._childPath(parent, name);
-    await this._store.createFolderAndNode(
-      parent.id,
-      {
-        id: createEcodeId(),
-        name,
-        treeType: 'folder',
-        businessType: 'type',
-        hasChild: true,
-      },
-      targetPath
-    );
+    const targetPath = parent ? this._childPath(parent, name) : name;
+    const item = {
+      id: createEcodeId(),
+      name,
+      treeType: 'folder',
+      businessType: 'type',
+      localOnly: true,
+      hasChild: true,
+    };
+    if (parent) await this._store.createFolderAndNode(parent.id, item, targetPath);
+    else await this._store.createRootFolderAndNode(item, targetPath);
     await this.refresh();
   }
 
@@ -375,9 +413,33 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
       useTrash: true,
     });
 
+    if (element.unassociated) {
+      await this.refresh();
+      return;
+    }
+
     const tree = await this._store.readRequired();
     this._store.removeItem(tree, element.id);
     await this._store.write(tree);
+    await this.refresh();
+  }
+
+  async resetAssociation(element: EcodeNode): Promise<void> {
+    if (
+      element.type !== 'folder' ||
+      !element.localOnly ||
+      (element.businessType !== 'type' && (!element.appId || element.attribute === 'system'))
+    ) {
+      throw new Error('Select a local type or app.');
+    }
+    const confirm = await vscode.window.showWarningMessage(
+      `Reset local association for "${element.remotePath}"? Its tree records and generated app metadata will be removed. The folder and files will remain in the Local view for a new association.`,
+      { modal: true },
+      'Reset Association'
+    );
+    if (confirm !== 'Reset Association') return;
+
+    await this._store.resetAssociation(element.id, element.remotePath);
     await this.refresh();
   }
 
@@ -416,10 +478,46 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
 
   private async _ensureLoaded(): Promise<void> {
     if (this._loaded) return;
-    const items = (await this._store.read()) || [];
-    this._roots = this._mapTreeItems(items);
-    this._loaded = true;
-    if (this._publishSelectionActive) this._rebuildPublishSelectionIndex();
+    if (!this._loadPromise) {
+      const revision = this._loadRevision;
+      const load = (async () => {
+        const items = (await this._store.read()) || [];
+        const roots = this._mapTreeItems(items);
+        if (this._store.treeExists) {
+          const nodesByPath = new Map<string, EcodeNode>();
+          const index = (nodes: EcodeNode[]): void => {
+            for (const node of nodes) {
+              nodesByPath.set(node.remotePath, node);
+              index(node.children || []);
+            }
+          };
+          index(roots);
+          for (const missing of await this._store.findUnassociatedLocalItems(items)) {
+            const parent = missing.parentPath ? nodesByPath.get(missing.parentPath) : undefined;
+            if (missing.parentPath && !parent) continue;
+            const node = new EcodeNode({
+              label: missing.name,
+              type: missing.isDirectory ? 'folder' : 'file',
+              parent,
+              remotePath: missing.relativePath,
+              unassociated: true,
+            });
+            if (parent) (parent.children ??= []).push(node);
+            else roots.push(node);
+          }
+        }
+        if (revision !== this._loadRevision) return;
+        this._roots = roots;
+        this._loaded = true;
+        if (this._publishSelectionActive) this._rebuildPublishSelectionIndex();
+      })();
+      const pending = load.finally(() => {
+        if (this._loadPromise === pending) this._loadPromise = undefined;
+      });
+      this._loadPromise = pending;
+    }
+    await this._loadPromise;
+    if (!this._loaded) await this._ensureLoaded();
   }
 
   private _getPublishAppIds(element: EcodeNode): string[] {
@@ -450,13 +548,25 @@ export class LocalTreeDataProvider extends BaseEcodeTreeDataProvider {
   }
 
   private _getContextValue(element: EcodeNode): string {
+    if (element.unassociated) {
+      if (
+        element.type === 'folder' &&
+        (element.parent?.businessType === 'type' || element.parent?.businessType === 'project')
+      ) {
+        return 'localUnassociatedKindChoice';
+      }
+      return element.type === 'folder' && !element.parent ? 'localUnassociatedType' : 'localUnassociatedSingle';
+    }
     const values: string[] = [];
     if (element.type === 'folder') {
       values.push('localFolder');
+      if (element.localOnly && (element.businessType === 'type' || (element.appId && element.attribute !== 'system'))) {
+        values.push('localCanResetAssociation');
+      }
       if (element.businessType === 'type' || element.businessType === 'project') {
         values.push('localCanCreateApp');
       }
-      if (element.businessType === 'type') values.push('localCanCreateType');
+      if (element.businessType === 'type' || element.businessType === 'project') values.push('localCanCreateType');
       if (element.attribute === 'resource') values.push('localCanUploadResource');
       if (element.appId) {
         values.push('localApp', 'localCanCreateChild');

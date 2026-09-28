@@ -41,8 +41,8 @@ export class RemoteEcodeOperations {
     return this.client.addFolder(name, undefined, this.requireNodeId(parent));
   }
 
-  createType(parent: EcodeNode, name: string): Promise<unknown> {
-    return this.client.addType(name, this.requireNodeId(parent));
+  createType(parent: EcodeNode | undefined, name: string): Promise<unknown> {
+    return this.client.addType(name, parent ? this.requireNodeId(parent) : '');
   }
 
   createFolder(parent: EcodeNode, name: string): Promise<unknown> {

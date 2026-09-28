@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import type { RemoteTreeItem } from './type';
-import { isTreeContainer, normalizeTreePath, walkEcodeTree, type EcodeTreeItem } from './tree-utils';
+import { compactEcodeTree, isTreeContainer, normalizeTreePath, walkEcodeTree, type EcodeTreeItem } from './tree-utils';
 
 export type { EcodeTreeItem } from './tree-utils';
 
@@ -156,7 +156,7 @@ export async function downloadEcode(
   const files = selectedPaths ? allFiles.filter((file) => selectedPaths.has(file.relativePath)) : allFiles;
 
   await fs.mkdir(path.dirname(treeFilePath), { recursive: true });
-  await fs.writeFile(treeFilePath, `${JSON.stringify(tree, null, 2)}\n`, 'utf8');
+  await fs.writeFile(treeFilePath, `${JSON.stringify(compactEcodeTree(tree), null, 2)}\n`, 'utf8');
 
   let downloaded = 0;
   let skipped = 0;

@@ -31,7 +31,7 @@ const tree = await client.listTree();
 
 ## 下载项目
 
-`client.download(outputRoot)` 会读取完整远程目录，将源文件写入 `<outputRoot>/src`，并生成 `<outputRoot>/.ecode/ecode-tree.json`。
+`client.download(outputRoot)` 会读取完整远程目录，将源文件写入 `<outputRoot>/src`，并生成 `<outputRoot>/.ecode/ecode-tree.json`。保存的树保留节点层级、文件顺序及构建、发布、应用选择所需的元数据，去除未使用的远端接口字段。
 
 默认保留已经存在的本地源文件；传入 `overwrite: true` 可以覆盖：
 

@@ -3,20 +3,43 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { EcodeClient } = require('../dist/index.js');
+const { EcodeClient, collectEcodeAppConfigs } = require('../dist/index.js');
 
 function createClient() {
   const client = new EcodeClient();
   client.listTree = async (folderId = '', typeId = '') => {
     if (!folderId && !typeId) {
-      return [{ id: 'type-1', name: 'Type', treeType: 'type', businessType: 'type', hasChild: true }];
+      return [
+        { id: 'type-1', name: 'Type', treeType: 'type', businessType: 'type', hasChild: true, unusedRemoteField: 'discard' },
+      ];
     }
     if (typeId === 'type-1') {
-      return [{ id: 'app-1', name: 'App', treeType: 'folder', initialAppId: 'app-1', hasChild: true }];
+      return [{
+        id: 'app-1',
+        name: 'App',
+        treeType: 'folder',
+        initialAppId: 'app-1',
+        parentId: 'type-1',
+        status: 'released',
+        preStateOrder: 7,
+        coverConfig: true,
+        shareMd: 'y',
+        caseVersion: '2',
+        hasChild: true,
+        unusedRemoteField: 'discard',
+      }];
     }
     if (folderId === 'app-1') {
       return [
-        { id: 'file-1', name: 'index.js', treeType: 'file', fileExtension: 'js' },
+        {
+          id: 'file-1',
+          name: 'index.js',
+          treeType: 'file',
+          fileExtension: 'js',
+          state: 'pre-state',
+          parentId: 'app-1',
+          unusedRemoteField: 'discard',
+        },
         { id: 'resource-folder', name: 'resources', treeType: 'folder', attribute: 'resource', hasChild: true },
       ];
     }
@@ -59,6 +82,19 @@ describe('eCode downloader', () => {
       assert.strictEqual(tree[0].name, 'Type');
       assert.strictEqual(tree[0].children[0].name, 'App');
       assert.strictEqual(tree[0].children[0].children[1].children[0].name, 'logo.bin');
+      assert.strictEqual(tree[0].unusedRemoteField, undefined);
+      assert.strictEqual(tree[0].hasChild, undefined);
+      assert.strictEqual(tree[0].children[0].unusedRemoteField, undefined);
+      assert.strictEqual(tree[0].children[0].parentId, 'type-1');
+      assert.strictEqual(tree[0].children[0].status, 'released');
+      assert.strictEqual(tree[0].children[0].preStateOrder, 7);
+      assert.strictEqual(tree[0].children[0].coverConfig, true);
+      assert.strictEqual(tree[0].children[0].shareMd, 'y');
+      assert.strictEqual(tree[0].children[0].caseVersion, '2');
+      assert.strictEqual(tree[0].children[0].children[0].parentId, undefined);
+      assert.strictEqual(tree[0].children[0].children[0].state, 'pre-state');
+      assert.strictEqual(tree[0].children[0].children[1].children[0].route, '/resource/logo.bin');
+      assert.deepStrictEqual(collectEcodeAppConfigs(tree), collectEcodeAppConfigs(result.tree));
     } finally {
       fs.rmSync(temporaryRoot, { recursive: true, force: true });
     }
