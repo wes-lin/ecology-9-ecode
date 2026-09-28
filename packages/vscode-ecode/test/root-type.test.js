@@ -12,6 +12,7 @@ function loadTypeScript(relativePath) {
     platform: 'node',
     format: 'cjs',
     external: ['vscode'],
+    alias: { 'ecode-sdk': path.join(__dirname, '../../ecode-sdk/src/index.ts') },
     write: false,
   });
   const module = { exports: {} };
