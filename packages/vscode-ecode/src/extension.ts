@@ -55,6 +55,24 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
   context.subscriptions.push(vscode.commands.registerCommand('ecode.refresh', () => treeDataProvider.refresh()));
+  const registerAssociationCommand = (
+    command: string,
+    operation: (item: EcodeNode) => Promise<void>
+  ): vscode.Disposable =>
+    vscode.commands.registerCommand(command, async (item?: EcodeNode) => {
+      if (!item?.unassociated) return;
+      try {
+        await operation(item);
+      } catch (error) {
+        vscode.window.showErrorMessage(`Associate local eCode item failed: ${getErrorMessage(error)}`);
+      }
+    });
+  context.subscriptions.push(
+    registerAssociationCommand('ecode.local.chooseAssociation', (item) => localTreeDataProvider.chooseAssociation(item)),
+    registerAssociationCommand('ecode.local.associateAsApp', (item) => localTreeDataProvider.associateSelected(item, 'app')),
+    registerAssociationCommand('ecode.local.associateAsType', (item) => localTreeDataProvider.associateSelected(item, 'type')),
+    registerAssociationCommand('ecode.local.associateSingle', (item) => localTreeDataProvider.associateSelected(item))
+  );
   context.subscriptions.push(
     vscode.commands.registerCommand('ecode.local.refresh', () => localTreeDataProvider.reloadFromTree())
   );
@@ -222,7 +240,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('ecode.createNewType', async (item: EcodeNode) => {
+    vscode.commands.registerCommand('ecode.createNewType', async (item?: EcodeNode) => {
       await treeDataProvider.createNewType(item);
     })
   );
@@ -286,19 +304,29 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     registerLocalCommand('ecode.local.openFile', (item) => localTreeDataProvider.openFile(item)),
     registerLocalCommand('ecode.local.createNewApp', (item) => localTreeDataProvider.createNewApp(item)),
-    registerLocalCommand('ecode.local.createNewType', (item) => localTreeDataProvider.createNewType(item)),
     registerLocalCommand('ecode.local.createNewFolder', (item) => localTreeDataProvider.createNewFolder(item)),
     registerLocalCommand('ecode.local.createNewJs', (item) => localTreeDataProvider.createNewFile(item, 'js')),
     registerLocalCommand('ecode.local.createNewCss', (item) => localTreeDataProvider.createNewFile(item, 'css')),
     registerLocalCommand('ecode.local.createNewMd', (item) => localTreeDataProvider.createNewFile(item, 'md')),
     registerLocalCommand('ecode.local.uploadResource', (item) => localTreeDataProvider.uploadResource(item)),
     registerLocalCommand('ecode.local.renameItem', (item) => localTreeDataProvider.renameItem(item)),
+    registerLocalCommand('ecode.local.resetAssociation', (item) => localTreeDataProvider.resetAssociation(item)),
     registerLocalCommand('ecode.local.deleteItem', (item) => localTreeDataProvider.deleteItem(item)),
     registerLocalCommand('ecode.local.release', (item) => localTreeDataProvider.release(item)),
     registerLocalCommand('ecode.local.cancelRelease', (item) => localTreeDataProvider.cancelRelease(item)),
     registerLocalCommand('ecode.local.setPreload', (item) => localTreeDataProvider.setPreload(item)),
     registerLocalCommand('ecode.local.cancelPreload', (item) => localTreeDataProvider.cancelPreload(item)),
     registerLocalCommand('ecode.local.setPreloadOrder', (item) => localTreeDataProvider.setPreloadOrder(item))
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('ecode.local.createNewType', async (item?: EcodeNode) => {
+      try {
+        await localTreeDataProvider.createNewType(item);
+      } catch (error) {
+        vscode.window.showErrorMessage(`Local eCode operation failed: ${getErrorMessage(error)}`);
+      }
+    })
   );
 
   context.subscriptions.push(
@@ -326,6 +354,19 @@ export function activate(context: vscode.ExtensionContext): void {
     localMetadataWatcher.onDidCreate(refreshLocalTree),
     localMetadataWatcher.onDidChange(refreshLocalTree),
     localMetadataWatcher.onDidDelete(refreshLocalTree)
+  );
+  const localSourceWatcher = vscode.workspace.createFileSystemWatcher('**/src/**');
+  let sourceRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  const refreshSource = (uri: vscode.Uri): void => {
+    if (!localTreeDataProvider.isSourcePath(uri.fsPath)) return;
+    if (sourceRefreshTimer) clearTimeout(sourceRefreshTimer);
+    sourceRefreshTimer = setTimeout(() => void localTreeDataProvider.refresh(), 250);
+  };
+  context.subscriptions.push(
+    localSourceWatcher,
+    localSourceWatcher.onDidCreate(refreshSource),
+    localSourceWatcher.onDidDelete(refreshSource),
+    { dispose: () => { if (sourceRefreshTimer) clearTimeout(sourceRefreshTimer); } }
   );
   refreshLocalTree();
 }

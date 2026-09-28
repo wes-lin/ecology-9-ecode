@@ -46,7 +46,7 @@ export {
   type EcodeAppPackagePublishResult,
   type EcodePublishApp,
 } from './publisher';
-export { getEcodeAppId } from './tree-utils';
+export { compactEcodeTree, getEcodeAppId } from './tree-utils';
 export {
   buildAppUpgradePackage,
   type EcodeAppUpgradePackageOptions,

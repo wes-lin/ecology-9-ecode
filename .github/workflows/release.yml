@@ -13,13 +13,23 @@ on:
         options:
           - all
           - sdk
-          - runtime
+          # - runtime
           - plugin
       prerelease:
         type: boolean
         required: false
         description: Mark the plugin GitHub Release as a prerelease
         default: false
+      marketplace:
+        type: boolean
+        required: false
+        description: Publish the plugin to the Visual Studio Marketplace
+        default: true
+      openvsx:
+        type: boolean
+        required: false
+        description: Publish the plugin to the Open VSX Registry
+        default: true
 
 concurrency:
   group: release
@@ -63,53 +73,53 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
 
-  publish-runtime:
-    name: Publish development runtime to npm
-    needs: publish-sdk
-    if: >-
-      ${{ always() &&
-          (inputs.target == 'all' || inputs.target == 'runtime') &&
-          (inputs.target != 'all' || needs.publish-sdk.result == 'success') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
+  # publish-runtime:
+  #   name: Publish development runtime to npm
+  #   needs: publish-sdk
+  #   if: >-
+  #     ${{ always() &&
+  #         (inputs.target == 'all' || inputs.target == 'runtime') &&
+  #         (inputs.target != 'all' || needs.publish-sdk.result == 'success') }}
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     contents: read
+  #     id-token: write
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v6
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.15.0
-          run_install: false
+  #     - name: Install pnpm
+  #       uses: pnpm/action-setup@v4
+  #       with:
+  #         version: 10.15.0
+  #         run_install: false
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          package-manager-cache: false
-          registry-url: https://registry.npmjs.org
+  #     - name: Set up Node.js
+  #       uses: actions/setup-node@v6
+  #       with:
+  #         node-version: 22
+  #         package-manager-cache: false
+  #         registry-url: https://registry.npmjs.org
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+  #     - name: Install dependencies
+  #       run: pnpm install --frozen-lockfile
 
-      - name: Test development runtime
-        run: pnpm --filter ecode-dev-runtime test
+  #     - name: Test development runtime
+  #       run: pnpm --filter ecode-dev-runtime test
 
-      - name: Publish development runtime
-        working-directory: packages/ecode-dev-runtime
-        run: pnpm publish --access public --provenance --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
+  #     - name: Publish development runtime
+  #       working-directory: packages/ecode-dev-runtime
+  #       run: pnpm publish --access public --provenance --no-git-checks
+  #       env:
+  #         NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
 
-  release-plugin:
-    name: Publish plugin to GitHub Releases
+  package-plugin:
+    name: Package VS Code plugin
     if: ${{ inputs.target == 'all' || inputs.target == 'plugin' }}
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: Checkout repository
@@ -129,6 +139,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Test plugin
+        run: pnpm --filter vscode-ecode test
 
       - name: Package plugin
         run: pnpm --filter vscode-ecode package
@@ -143,18 +156,56 @@ jobs:
             echo "Plugin package was not generated." >&2
             exit 1
           fi
+          is_prerelease=false
+          if [[ "$version" == *-* ]]; then
+            is_prerelease=true
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=vscode-ecode-v$version" >> "$GITHUB_OUTPUT"
+          echo "vsix_name=$(basename "$vsix_path")" >> "$GITHUB_OUTPUT"
           echo "vsix_path=$vsix_path" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-ecode-vsix
+          path: ${{ steps.plugin.outputs.vsix_path }}
+          if-no-files-found: error
+          retention-days: 30
+
+    outputs:
+      version: ${{ steps.plugin.outputs.version }}
+      tag: ${{ steps.plugin.outputs.tag }}
+      vsix_name: ${{ steps.plugin.outputs.vsix_name }}
+      is_prerelease: ${{ steps.plugin.outputs.is_prerelease }}
+
+  release-plugin:
+    name: Publish plugin to GitHub Releases
+    needs: package-plugin
+    if: ${{ inputs.target == 'all' || inputs.target == 'plugin' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Download VSIX artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vscode-ecode-vsix
+          path: artifacts
 
       - name: Create GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           IS_PRERELEASE: ${{ inputs.prerelease }}
-          RELEASE_TAG: ${{ steps.plugin.outputs.tag }}
-          PLUGIN_VERSION: ${{ steps.plugin.outputs.version }}
-          VSIX_PATH: ${{ steps.plugin.outputs.vsix_path }}
+          RELEASE_TAG: ${{ needs.package-plugin.outputs.tag }}
+          PLUGIN_VERSION: ${{ needs.package-plugin.outputs.version }}
+          VSIX_PATH: artifacts/${{ needs.package-plugin.outputs.vsix_name }}
         run: |
           release_options=()
           if [[ "$IS_PRERELEASE" == "true" ]]; then
@@ -165,3 +216,77 @@ jobs:
             --title "eCode Explorer v$PLUGIN_VERSION" \
             --generate-notes \
             "${release_options[@]}"
+
+  publish-marketplace:
+    name: Publish plugin to Visual Studio Marketplace
+    needs: package-plugin
+    if: >-
+      ${{ (inputs.target == 'all' || inputs.target == 'plugin') &&
+          inputs.marketplace }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download VSIX artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vscode-ecode-vsix
+          path: artifacts
+
+      - name: Publish to Visual Studio Marketplace
+        shell: bash
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          IS_PRERELEASE: ${{ needs.package-plugin.outputs.is_prerelease }}
+          VSIX_PATH: ${{ github.workspace }}/artifacts/${{ needs.package-plugin.outputs.vsix_name }}
+        run: |
+          publish_options=()
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            publish_options+=(--pre-release)
+          fi
+          pnpm --filter vscode-ecode exec vsce publish \
+            --packagePath "$VSIX_PATH" \
+            "${publish_options[@]}"
+
+  publish-openvsx:
+    name: Publish plugin to Open VSX Registry
+    needs: package-plugin
+    if: >-
+      ${{ (inputs.target == 'all' || inputs.target == 'plugin') &&
+          inputs.openvsx }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download VSIX artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vscode-ecode-vsix
+          path: artifacts
+
+      - name: Publish to Open VSX Registry
+        shell: bash
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+          VSIX_PATH: ${{ github.workspace }}/artifacts/${{ needs.package-plugin.outputs.vsix_name }}
+        run: npx --yes ovsx publish "$VSIX_PATH" --pat "$OVSX_PAT"

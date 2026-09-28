@@ -9,6 +9,7 @@ export function createLocalAppTree(name: string): EcodeLocalTreeItem {
     treeType: 'folder',
     hasChild: true,
     initialAppId: appId,
+    localOnly: true,
     status: '',
     preStateOrder: 10000,
     children: [

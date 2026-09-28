@@ -88,6 +88,7 @@ export abstract class BaseEcodeTreeDataProvider implements vscode.TreeDataProvid
       appPreStateOrder: item.preStateOrder || 10000,
       fileExtension: item.fileExtension || '',
       debugMode: item.debugMode,
+      localOnly: item.localOnly === true,
     });
     if (item.children) {
       node.children = this._mapTreeItems(item.children, remotePath, node);

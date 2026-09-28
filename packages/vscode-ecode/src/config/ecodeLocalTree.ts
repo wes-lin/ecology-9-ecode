@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { EcodeTreeItem } from 'ecode-sdk';
+import { compactEcodeTree, type EcodeTreeItem } from 'ecode-sdk';
 
 export type EcodeLocalTreeItem = EcodeTreeItem;
 
@@ -16,5 +16,5 @@ export async function readLocalTreeFile(targetPath: string): Promise<EcodeLocalT
 
 export async function writeLocalTreeFile(targetPath: string, items: EcodeLocalTreeItem[]): Promise<void> {
   await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
-  await fs.promises.writeFile(targetPath, `${JSON.stringify(items, null, 2)}\n`, 'utf8');
+  await fs.promises.writeFile(targetPath, `${JSON.stringify(compactEcodeTree(items), null, 2)}\n`, 'utf8');
 }
