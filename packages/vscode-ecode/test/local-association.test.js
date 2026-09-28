@@ -4,7 +4,17 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const esbuild = require('esbuild');
-const { collectEcodeAppConfigs } = require('../../ecode-sdk/dist/index.js');
+
+const sdkBundle = esbuild.buildSync({
+  entryPoints: [path.join(__dirname, '../../ecode-sdk/src/app-config.ts')],
+  bundle: true,
+  platform: 'node',
+  format: 'cjs',
+  write: false,
+});
+const sdkModule = { exports: {} };
+new Function('require', 'module', 'exports', sdkBundle.outputFiles[0].text)(require, sdkModule, sdkModule.exports);
+const { collectEcodeAppConfigs } = sdkModule.exports;
 
 const bundle = esbuild.buildSync({
   entryPoints: [path.join(__dirname, '../src/providers/local/associateLocalItems.ts')],
